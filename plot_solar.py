@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import argparse
 import sys
+import os
 
 # --- ARGUMENTOS ---
 parser = argparse.ArgumentParser(description='Análisis Solar con Espectrograma y Curva de Potencia')
@@ -14,6 +16,7 @@ parser.add_argument('--fmin', type=float, help='Frecuencia mínima (MHz)')
 parser.add_argument('--fmax', type=float, help='Frecuencia máxima (MHz)')
 parser.add_argument('--t_cal_start', help='Inicio calibración (HH:MM:SS)', default="03:00:00")
 parser.add_argument('--t_cal_end', help='Fin calibración (HH:MM:SS)', default="04:00:00")
+parser.add_argument('--output', '-o', help='Nombre del archivo de salida (ej: grafico.png)')
 args = parser.parse_args()
 
 # 1. Cargar y ordenar datos
@@ -100,5 +103,18 @@ for dia in df['datetime'].dt.date.unique():
         ax2.axvline(x=m_time, color='red', linestyle='--', alpha=0.5, label='Mediodía')
 
 plt.tight_layout()
-plt.savefig(f"solar_full_analysis_{view_min:.1f}.png", dpi=300)
+#plt.savefig(f"solar_full_analysis_{view_min:.1f}_{view_max:.1f}_{t_start}_{t_end}.png", dpi=300)
+
+# --- DETERMINAR NOMBRE DE SALIDA ---
+if args.output:
+    # Si el usuario pasó un nombre, usamos ese
+    output_file = args.output
+else:
+    # Si no, tomamos el nombre del CSV (ej: datos.csv) y lo cambiamos a datos.png
+    base_name = os.path.splitext(args.archivo)[0]
+    output_file = f"{base_name}.png"
+
 print("Análisis completo generado.")
+plt.savefig(output_file, dpi=300, bbox_inches='tight')
+print(f"Éxito: Imagen guardada como {output_file}")
+
