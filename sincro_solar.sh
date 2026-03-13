@@ -29,7 +29,7 @@ while true; do
     # e inmediatamente vuelve al inicio del 'while' para empezar el nuevo rtl_power.
     (
         echo "[$(date +%T)] Sincronización iniciada para $FILE_NAME..."
-        rsync -avz --partial --remove-source-files "$FILE_PATH" "$REMOTE_USER@$REMOTE_IP:$REMOTE_DIR"
+        rsync -avz --partial --remove-source-files "$LOCAL_DIR/*.csv" "$REMOTE_USER@$REMOTE_IP:$REMOTE_DIR"
         
         if [ $? -eq 0 ]; then
             echo "[$(date +%T)] Sincro OK: $FILE_NAME subido y borrado."
