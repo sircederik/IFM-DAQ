@@ -17,6 +17,10 @@ parser.add_argument('--fmax', type=float, help='Frecuencia máxima (MHz)')
 parser.add_argument('--start', help='Inicio (AAAA-MM-DD HH:MM)', default=None)
 parser.add_argument('--end', help='Fin (AAAA-MM-DD HH:MM)', default=None)
 parser.add_argument('--output', '-o', help='Nombre del archivo de salida')
+
+parser.add_argument('--cal_file', help='Archivo CSV externo solo para ruido (Opcional)')
+parser.add_argument('--cal_range', nargs=2, help='Rango HH:MM HH:MM para extraer ruido del set actual', default=["03:00", "04:00"])
+
 args = parser.parse_args()
 
 
@@ -38,6 +42,41 @@ df = pd.concat(lista_df, ignore_index=True)
 # Crear columna de tiempo y ordenar
 df['datetime'] = pd.to_datetime(df[0] + ' ' + df[1])
 df = df.sort_values('datetime')
+
+# --- EXTRACCIÓN DE RUIDO DE FONDO (CORREGIDO) ---
+print("🧪 Calibrando ruido de fondo...")
+
+# Seleccionamos solo las columnas que son puramente datos de intensidad
+# Ignoramos la col 'datetime' y las primeras 6 columnas de metadatos del CSV
+columnas_datos = df.iloc[:, 6:].select_dtypes(include=[np.number])
+
+if args.cal_file:
+    # OPCIÓN 2: Usar archivo externo
+    df_noise = pd.read_csv(args.cal_file, header=None, low_memory=False)
+    noise_matrix = df_noise.iloc[:, 6:].select_dtypes(include=[np.number]).values
+else:
+    # OPCIÓN 1: Usar rango de calma
+    t_start_c = pd.to_datetime(args.cal_range[0]).time()
+    t_end_c = pd.to_datetime(args.cal_range[1]).time()
+    
+    mask_cal = (df['datetime'].dt.time >= t_start_c) & (df['datetime'].dt.time <= t_end_c)
+    noise_matrix = df[mask_cal].iloc[:, 6:].select_dtypes(include=[np.number]).values
+
+# Si no hay datos en el rango de calma o el rango falló
+if noise_matrix.size == 0:
+    print("⚠️ Rango de calibración vacío o no numérico. Usando mediana global de columnas de datos.")
+    perfil_ruido = np.nanmedian(columnas_datos.values, axis=0)
+else:
+    perfil_ruido = np.nanmedian(noise_matrix, axis=0)
+
+# Aplicar la resta solo a las columnas numéricas
+data_all_numeric = columnas_datos.values
+data_calibrada = data_all_numeric - perfil_ruido
+
+# Actualizar el DataFrame original con los datos limpios
+# Usamos el índice de las columnas numéricas para asegurar precisión
+df.iloc[:, 6:6+data_calibrada.shape[1]] = data_calibrada
+
 
 try:
     # Filtrar por tiempo si se solicita
@@ -73,9 +112,7 @@ col_idx_start = max(6, int((view_min - f_start_file) / f_step) + 6)
 col_idx_end = min(df.shape[1], int((view_max - f_start_file) / f_step) + 6)
 
 # Extraer matriz de datos y calcular potencia
-data = df.iloc[:, col_idx_start:col_idx_end].values
-# Resta de ruido simple (mediana de la fila) para resaltar eventos
-data_limpia = data - np.median(data, axis=0)
+data_limpia = df.iloc[:, col_idx_start:col_idx_end].values
 
 potencia_suavizada = pd.Series(np.mean(data_limpia, axis=1)).rolling(window=20, center=True).mean()
 
@@ -158,7 +195,7 @@ if not args.output:
     fecha_fin = df['datetime'].iloc[-1].strftime('%Y%m%d_%H%M')
     output_file = f"solar_{fecha_inicio}_to_{fecha_fin}.png"
 else:
-    output_file = args.output if args.output else os.path.splitext(args.archivo)[0] + ".png"
+    output_file = args.output if args.output else os.path.splitext(args.archivos[0])[0] + ".png"
 
 plt.savefig(output_file, dpi=300)
 print(f"Éxito: Imagen guardada como {output_file}")
