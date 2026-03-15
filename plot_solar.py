@@ -9,159 +9,156 @@ import argparse
 import sys
 import os
 
-# --- ARGUMENTOS ---
-parser = argparse.ArgumentParser(description='Análisis Solar con Espectrograma y Curva de Potencia')
-parser.add_argument('archivo', help='Archivo CSV de rtl_power')
+# --- 1. CONFIGURACIÓN DE ARGUMENTOS ---
+parser = argparse.ArgumentParser(description='Análisis Solar Morelia v3.0')
+parser.add_argument('archivos', nargs='+', help='Uno o más archivos CSV de entrada')
 parser.add_argument('--fmin', type=float, help='Frecuencia mínima (MHz)')
 parser.add_argument('--fmax', type=float, help='Frecuencia máxima (MHz)')
-parser.add_argument('--t_cal_start', help='Inicio calibración (HH:MM:SS)', default="03:00:00")
-parser.add_argument('--t_cal_end', help='Fin calibración (HH:MM:SS)', default="04:00:00")
-parser.add_argument('--output', '-o', help='Nombre del archivo de salida (ej: grafico.png)')
 parser.add_argument('--start', help='Inicio (AAAA-MM-DD HH:MM)', default=None)
 parser.add_argument('--end', help='Fin (AAAA-MM-DD HH:MM)', default=None)
+parser.add_argument('--output', '-o', help='Nombre del archivo de salida')
 args = parser.parse_args()
 
-# 1. Cargar y ordenar datos
+
+# --- REEMPLAZAR EL BLOQUE DE CARGA (Punto 1 en tu script) ---
+lista_df = []
+
+print(f"📂 Cargando {len(args.archivos)} archivos...")
+
+for f in args.archivos:
+    try:
+        temp_df = pd.read_csv(f, header=None)
+        lista_df.append(temp_df)
+    except Exception as e:
+        print(f"⚠️ Error al leer {f}: {e}")
+
+# Concatenar todos los archivos en uno solo
+df = pd.concat(lista_df, ignore_index=True)
+
+# Crear columna de tiempo y ordenar
+df['datetime'] = pd.to_datetime(df[0] + ' ' + df[1])
+df = df.sort_values('datetime')
+
 try:
-    df = pd.read_csv(args.archivo, header=None)
-    df['datetime'] = pd.to_datetime(df[0] + ' ' + df[1])
-
-    # --- FILTRADO POR RANGO COMPLETO ---
+    # Filtrar por tiempo si se solicita
     if args.start:
-        start_dt = pd.to_datetime(args.start)
-        df = df[df['datetime'] >= start_dt]
-
+        df = df[df['datetime'] >= pd.to_datetime(args.start)]
     if args.end:
-        end_dt = pd.to_datetime(args.end)
-        df = df[df['datetime'] <= end_dt]
+        df = df[df['datetime'] <= pd.to_datetime(args.end)]
 
     if df.empty:
-        print(f"Error: No hay datos entre {args.start} y {args.end}")
+        print("Error: El rango seleccionado no contiene datos.")
         sys.exit(1)
 
     df = df.sort_values('datetime')
-    # --- RESUMEN DE DATOS FILTRADOS ---
-    total_puntos = len(df)
-    duracion = df['datetime'].iloc[-1] - df['datetime'].iloc[0]
-    horas, rem = divmod(duracion.total_seconds(), 3600)
-    minutos = rem // 60
 
-    print("-" * 40)
-    print(f"📡 PROCESANDO RANGO SELECCIONADO:")
-    print(f"   Inicio:  {df['datetime'].iloc[0]}")
-    print(f"   Fin:     {df['datetime'].iloc[-1]}")
-    print(f"   Duración total: {int(horas)}h {int(minutos)}min")
-    print(f"   Puntos de datos: {total_puntos}")
-    print("-" * 40)
+    # Resumen en terminal
+    duracion = df['datetime'].iloc[-1] - df['datetime'].iloc[0]
+    print(f"--- Procesando: {duracion} de datos ---")
+
 except Exception as e:
-    print(f"Error: {e}")
+    print(f"Error al cargar archivo: {e}")
     sys.exit(1)
 
-# 2. Metadatos y Frecuencia
-f_start_file, f_end_file, f_step = df.iloc[0, 2]/1e6, df.iloc[0, 3]/1e6, df.iloc[0, 4]/1e6
-num_total_cols = df.shape[1]
+# --- 3. METADATOS DE FRECUENCIA ---
+f_start_file = df.iloc[0, 2]/1e6
+f_end_file = df.iloc[0, 3]/1e6
+f_step = df.iloc[0, 4]/1e6
 
+# Determinar qué columnas de frecuencia mostrar
 view_min = args.fmin if args.fmin else f_start_file
 view_max = args.fmax if args.fmax else f_end_file
 
 col_idx_start = max(6, int((view_min - f_start_file) / f_step) + 6)
-col_idx_end = min(num_total_cols, int((view_max - f_start_file) / f_step) + 6)
+col_idx_end = min(df.shape[1], int((view_max - f_start_file) / f_step) + 6)
 
-# 3. Procesamiento y Calibración
-data_full = df.iloc[:, col_idx_start:col_idx_end].values
-mask_cal = (df['datetime'].dt.time >= pd.to_datetime(args.t_cal_start).time()) & \
-           (df['datetime'].dt.time <= pd.to_datetime(args.t_cal_end).time())
+# Extraer matriz de datos y calcular potencia
+data = df.iloc[:, col_idx_start:col_idx_end].values
+# Resta de ruido simple (mediana de la fila) para resaltar eventos
+data_limpia = data - np.median(data, axis=0)
 
-data_cal = df[mask_cal].iloc[:, col_idx_start:col_idx_end].values
-perfil_ruido = np.mean(data_cal, axis=0) if data_cal.size > 0 else np.mean(data_full, axis=0)
-data_limpia = data_full - perfil_ruido
+potencia_suavizada = pd.Series(np.mean(data_limpia, axis=1)).rolling(window=20, center=True).mean()
 
-# Cálculo de Potencia Promedio (La curva de abajo)
-potencia_total = np.mean(data_limpia, axis=1)
-# Aplicamos media móvil para limpiar el ruido electrónico (jitter)
-# Una ventana de 5 a 10 muestras suele ser ideal para 20 MHz
-ventana = 20
-potencia_suavizada = pd.Series(potencia_total).rolling(window=ventana, center=True).mean()
-
-# Estadísticas para el reescalado dinámico (Zoom automático)
 mediana_p = np.nanmedian(potencia_suavizada)
-sigma_p = np.nanstd(potencia_suavizada)
+std_p = np.nanstd(potencia_suavizada)
 
-# 4. Visualización con 2 Subplots (80% Espectrograma, 20% Curva)
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=False, 
-                               gridspec_kw={'height_ratios': [4, 1]})
-
-t_start, t_end = mdates.date2num(df['datetime'].min()), mdates.date2num(df['datetime'].max())
-v_min, v_max = np.percentile(data_limpia, [15, 99.5])
-
-# --- SUBPLOT 1: ESPECTROGRAMA ---
-im = ax1.imshow(data_limpia, aspect='auto', 
-                extent=[view_min, view_max, t_end, t_start], 
-                cmap='magma', vmin=v_min, vmax=v_max)
+#Banda 1 Sigma (Simétrica para el ruido de fondo)
+s3_up = mediana_p + 3*std_p
+s3_down = mediana_p - 3*std_p
 
 
-locator = mdates.AutoDateLocator(minticks=4, maxticks=10)
+# --- 4. GRAFICACIÓN ---
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]})
+
+# --- MARCADORES DE MEDIODÍA ---
+dias_unicos = df['datetime'].dt.date.unique()
+
+for dia in dias_unicos:
+    # Crear objeto datetime para el mediodía de ese día
+    medio_dia = pd.to_datetime(f"{dia} 12:00:00")
+    
+    # Solo dibujar si el mediodía está dentro del rango filtrado
+    if df['datetime'].min() <= medio_dia <= df['datetime'].max():
+        # Línea HORIZONTAL en Espectrograma (ax1)
+        # Usamos date2num porque el eje Y es tiempo
+        ax1.axhline(y=mdates.date2num(medio_dia), color='white', 
+                    linestyle='--', alpha=0.4, linewidth=1)
+        ax1.text(view_min + 0.002, mdates.date2num(medio_dia), 'Mediodía Solar', 
+                 color='white', fontsize=7, va='bottom', alpha=0.6)
+
+        # Línea VERTICAL en Potencia (ax2)
+        ax2.axvline(x=medio_dia, color='red', linestyle=':', alpha=0.5)
+
+
+# IMPORTANTE: Extent [X_min, X_max, Y_min, Y_max]
+# X = Frecuencia, Y = Tiempo
+y_start = mdates.date2num(df['datetime'].iloc[0])
+y_end = mdates.date2num(df['datetime'].iloc[-1])
+extent = [view_min, view_max, y_end, y_start]
+
+# Espectrograma
+v_min, v_max = np.percentile(data_limpia, [5, 98])
+im = ax1.imshow(data_limpia, aspect='auto', extent=extent, cmap='inferno', vmin=v_min, vmax=v_max)
+
+# Configurar ejes de Tiempo (Y en espectrograma, X en potencia)
+locator = mdates.AutoDateLocator()
 formatter = mdates.ConciseDateFormatter(locator)
 
-for ax in [ax1, ax2]:
-    ax.xaxis.set_major_locator(locator)
-    ax.xaxis.set_major_formatter(formatter)
-    # Rotar un poco para que no se encimen si el rango es corto
-    plt.setp(ax.get_xticklabels(), rotation=20, ha='right')
+ax1.yaxis.set_major_locator(locator)
+ax1.yaxis.set_major_formatter(formatter)
+ax1.set_ylabel("Tiempo (Local)")
+ax1.set_title(f"Análisis Radio-Solar: {view_min:.2f}-{view_max:.2f} MHz")
 
-# Buscar cambios de fecha para dibujar líneas divisoras
-#fechas_unicas = df['datetime'].dt.date.unique()
-#if len(fechas_unicas) > 1:
-#    for fecha in fechas_unicas[1:]: # Omitir la primera fecha
-#        # Convertir el inicio del día a formato numérico para matplotlib
-#        vline_x = mdates.date2num(pd.to_datetime(str(fecha)))
-#        for ax in [ax1, ax2]:
-#            ax.axvline(vline_x, color='red', linestyle='--', alpha=0.5, label='Cambio de día')
+# Configurar ejes de Frecuencia (X en espectrograma)
+ax1.set_xlabel("Frecuencia [MHz]")
+ax1.xaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
 
-ax1.set_ylabel('Tiempo (Local)')
-ax1.set_xlabel('Frecuencia [MHz]')
-ax1.set_title(f'Análisis Radio-Solar: {view_min}-{view_max} MHz')
-ax1.yaxis.set_major_formatter(mdates.DateFormatter('%Y/%m/%d\n%H:%M'))
-ax1.yaxis.set_major_locator(mdates.HourLocator(interval=2)) # Salto cada 2 horas
-fig.colorbar(im, ax=ax1, label='Relativa (dB)')
+# Curva de Potencia
 
-# --- SUBPLOT 2: CURVA DE POTENCIA ---
-ax2.plot(df['datetime'], potencia_suavizada, color='orange', linewidth=1.5, label='Potencia neta')
-umbral = mediana_p + (3 * sigma_p)
-ax2.axhline(y=umbral, color='red', linestyle=':', alpha=0.5, label='Umbral Detección')
-ax2.set_ylim(mediana_p - sigma_p, mediana_p + (sigma_p * 10))
-ax2.set_ylabel('Potencia (dB)')
-ax2.set_xlabel('Tiempo (Local)')
-ax2.grid(True, alpha=0.2, linestyle='--')
-ax2.legend(loc='upper right', fontsize=8)
-ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y/%m/%d\n%H:%M'))
-
-# --- LÍNEAS DE REFERENCIA ---
-for dia in df['datetime'].dt.date.unique():
-    m_time = pd.to_datetime(f"{dia} 12:00:00")
-    if df['datetime'].min() <= m_time <= df['datetime'].max():
-        # Línea en Espectrograma
-        ax1.axhline(y=mdates.date2num(m_time), color='white', linestyle='--', alpha=0.5)
-        ax1.text(view_min + 0.01, mdates.date2num(m_time), 'Mediodía Solar', color='white',
-            fontsize=8, verticalalignment='bottom', alpha=0.8)
+# --- DIBUJO DE BANDAS SIGMA EN AX2 ---
+# Banda 1 Sigma (Verde tenue - Ruido normal)
+ax2.fill_between(df['datetime'], s3_down, s3_up, color='green', alpha=0.2, label='±3σ')
 
 
-        # Línea en Curva de Potencia
-        ax2.axvline(x=m_time, color='red', linestyle='--', alpha=0.5, label='Mediodía')
+# Línea base de la Mediana
+ax2.axhline(y=mediana_p, color='blue', linestyle='-', alpha=0.2, label='Mediana')
 
+ax2.plot(df['datetime'], potencia_suavizada, color='orange')
+ax2.xaxis.set_major_locator(locator)
+ax2.xaxis.set_major_formatter(formatter)
+ax2.set_ylabel("Potencia (dB)")
+ax2.grid(True, alpha=0.3)
+
+# --- 5. GUARDADO ---
 plt.tight_layout()
-#plt.savefig(f"solar_full_analysis_{view_min:.1f}_{view_max:.1f}_{t_start}_{t_end}.png", dpi=300)
 
-# --- DETERMINAR NOMBRE DE SALIDA ---
-if args.output:
-    # Si el usuario pasó un nombre, usamos ese
-    output_file = args.output
+if not args.output:
+    # Genera un nombre basado en las fechas reales de los datos procesados
+    fecha_inicio = df['datetime'].iloc[0].strftime('%Y%m%d_%H%M')
+    fecha_fin = df['datetime'].iloc[-1].strftime('%Y%m%d_%H%M')
+    output_file = f"solar_{fecha_inicio}_to_{fecha_fin}.png"
 else:
-    # Si no, tomamos el nombre del CSV (ej: datos.csv) y lo cambiamos a datos.png
-    base_name = os.path.splitext(args.archivo)[0]
-    output_file = f"{base_name}.png"
+    output_file = args.output if args.output else os.path.splitext(args.archivo)[0] + ".png"
 
-print("Análisis completo generado.")
-plt.savefig(output_file, dpi=300, bbox_inches='tight')
+plt.savefig(output_file, dpi=300)
 print(f"Éxito: Imagen guardada como {output_file}")
-
