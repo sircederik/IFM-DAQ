@@ -17,13 +17,42 @@ parser.add_argument('--fmax', type=float, help='Frecuencia máxima (MHz)')
 parser.add_argument('--t_cal_start', help='Inicio calibración (HH:MM:SS)', default="03:00:00")
 parser.add_argument('--t_cal_end', help='Fin calibración (HH:MM:SS)', default="04:00:00")
 parser.add_argument('--output', '-o', help='Nombre del archivo de salida (ej: grafico.png)')
+parser.add_argument('--start', help='Inicio (AAAA-MM-DD HH:MM)', default=None)
+parser.add_argument('--end', help='Fin (AAAA-MM-DD HH:MM)', default=None)
 args = parser.parse_args()
 
 # 1. Cargar y ordenar datos
 try:
     df = pd.read_csv(args.archivo, header=None)
     df['datetime'] = pd.to_datetime(df[0] + ' ' + df[1])
+
+    # --- FILTRADO POR RANGO COMPLETO ---
+    if args.start:
+        start_dt = pd.to_datetime(args.start)
+        df = df[df['datetime'] >= start_dt]
+
+    if args.end:
+        end_dt = pd.to_datetime(args.end)
+        df = df[df['datetime'] <= end_dt]
+
+    if df.empty:
+        print(f"Error: No hay datos entre {args.start} y {args.end}")
+        sys.exit(1)
+
     df = df.sort_values('datetime')
+    # --- RESUMEN DE DATOS FILTRADOS ---
+    total_puntos = len(df)
+    duracion = df['datetime'].iloc[-1] - df['datetime'].iloc[0]
+    horas, rem = divmod(duracion.total_seconds(), 3600)
+    minutos = rem // 60
+
+    print("-" * 40)
+    print(f"📡 PROCESANDO RANGO SELECCIONADO:")
+    print(f"   Inicio:  {df['datetime'].iloc[0]}")
+    print(f"   Fin:     {df['datetime'].iloc[-1]}")
+    print(f"   Duración total: {int(horas)}h {int(minutos)}min")
+    print(f"   Puntos de datos: {total_puntos}")
+    print("-" * 40)
 except Exception as e:
     print(f"Error: {e}")
     sys.exit(1)
@@ -70,6 +99,25 @@ im = ax1.imshow(data_limpia, aspect='auto',
                 extent=[view_min, view_max, t_end, t_start], 
                 cmap='magma', vmin=v_min, vmax=v_max)
 
+
+locator = mdates.AutoDateLocator(minticks=4, maxticks=10)
+formatter = mdates.ConciseDateFormatter(locator)
+
+for ax in [ax1, ax2]:
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
+    # Rotar un poco para que no se encimen si el rango es corto
+    plt.setp(ax.get_xticklabels(), rotation=20, ha='right')
+
+# Buscar cambios de fecha para dibujar líneas divisoras
+#fechas_unicas = df['datetime'].dt.date.unique()
+#if len(fechas_unicas) > 1:
+#    for fecha in fechas_unicas[1:]: # Omitir la primera fecha
+#        # Convertir el inicio del día a formato numérico para matplotlib
+#        vline_x = mdates.date2num(pd.to_datetime(str(fecha)))
+#        for ax in [ax1, ax2]:
+#            ax.axvline(vline_x, color='red', linestyle='--', alpha=0.5, label='Cambio de día')
+
 ax1.set_ylabel('Tiempo (Local)')
 ax1.set_xlabel('Frecuencia [MHz]')
 ax1.set_title(f'Análisis Radio-Solar: {view_min}-{view_max} MHz')
@@ -78,7 +126,6 @@ ax1.yaxis.set_major_locator(mdates.HourLocator(interval=2)) # Salto cada 2 horas
 fig.colorbar(im, ax=ax1, label='Relativa (dB)')
 
 # --- SUBPLOT 2: CURVA DE POTENCIA ---
-#ax2.plot(df['datetime'], potencia_total, color='orange', linewidth=1)
 ax2.plot(df['datetime'], potencia_suavizada, color='orange', linewidth=1.5, label='Potencia neta')
 umbral = mediana_p + (3 * sigma_p)
 ax2.axhline(y=umbral, color='red', linestyle=':', alpha=0.5, label='Umbral Detección')
