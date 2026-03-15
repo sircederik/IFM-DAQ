@@ -133,7 +133,7 @@ dias_unicos = df['datetime'].dt.date.unique()
 for dia in dias_unicos:
     # Crear objeto datetime para el mediodía de ese día
     medio_dia = pd.to_datetime(f"{dia} 12:00:00")
-    
+
     # Solo dibujar si el mediodía está dentro del rango filtrado
     if df['datetime'].min() <= medio_dia <= df['datetime'].max():
         # Línea HORIZONTAL en Espectrograma (ax1)
@@ -157,6 +157,11 @@ extent = [view_min, view_max, y_end, y_start]
 v_min, v_max = np.percentile(data_limpia, [5, 98])
 im = ax1.imshow(data_limpia, aspect='auto', extent=extent, cmap='inferno', vmin=v_min, vmax=v_max)
 
+
+# --- REINCORPORAR COLORBAR ---
+cbar = fig.colorbar(im, ax=ax1, pad=0.01, aspect=20)
+cbar.set_label('Intensidad Relativa (dB)')
+
 # Configurar ejes de Tiempo (Y en espectrograma, X en potencia)
 locator = mdates.AutoDateLocator()
 formatter = mdates.ConciseDateFormatter(locator)
@@ -175,7 +180,6 @@ ax1.xaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
 # --- DIBUJO DE BANDAS SIGMA EN AX2 ---
 # Banda 1 Sigma (Verde tenue - Ruido normal)
 ax2.fill_between(df['datetime'], s3_down, s3_up, color='green', alpha=0.2, label='±3σ')
-
 
 # Línea base de la Mediana
 ax2.axhline(y=mediana_p, color='blue', linestyle='-', alpha=0.2, label='Mediana')
