@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- CONFIGURACIÓN ---
-FREQ_RANGE="19M:21M:1k"
+FREQ_RANGE="16M:24M:1k"
 GAIN="0"
 INTEGRATION="10s"
 DURATION="8h"
