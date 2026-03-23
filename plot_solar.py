@@ -25,98 +25,87 @@ parser.add_argument('--cal_range', nargs=2, help='Rango HH:MM HH:MM para extraer
 
 args = parser.parse_args()
 
-
-# --- REEMPLAZAR EL BLOQUE DE CARGA (Punto 1 en tu script) ---
+# --- 2. CARGA Y UNIFICACIÓN DE SALTOS (ESTRUCTURA LIMPIA) ---
 lista_df = []
-
 print(f"📂 Cargando {len(args.archivos)} archivos...")
-
 for f in args.archivos:
     try:
-        temp_df = pd.read_csv(f, header=None)
+        temp_df = pd.read_csv(f, header=None, low_memory=False)
+        
+        # 1. Creamos la columna datetime primero
+        temp_df['datetime'] = pd.to_datetime(temp_df[0] + ' ' + temp_df[1]) #
+        
+        # 2. Convertimos el bloque de datos a numérico de golpe (sin ciclos for col in...)
+        # Esto evita el PerformanceWarning y es mucho más rápido
+        temp_df.iloc[:, 6:-1] = temp_df.iloc[:, 6:-1].apply(pd.to_numeric, errors='coerce') #
+            
         lista_df.append(temp_df)
     except Exception as e:
         print(f"⚠️ Error al leer {f}: {e}")
 
-# Concatenar todos los archivos en uno solo
-df = pd.concat(lista_df, ignore_index=True)
+if not lista_df:
+    print("❌ No se pudieron cargar los archivos."); sys.exit(1)
 
-# Crear columna de tiempo y ordenar
-df['datetime'] = pd.to_datetime(df[0] + ' ' + df[1])
-df = df.sort_values('datetime')
+df_raw = pd.concat(lista_df, ignore_index=True)
 
-# --- EXTRACCIÓN DE RUIDO DE FONDO (CORREGIDO) ---
+# --- 2. ALINEACIÓN ULTRA-RÁPIDA (SIN GROUPBY) ---
+print("🚀 Alineando saltos de frecuencia con Vectorización...")
+
+# 1. Obtenemos los tiempos únicos y cuántos saltos hay por ciclo (hops)
+tiempos_finales = df_raw['datetime'].unique()
+tiempos_finales = pd.Series(tiempos_finales).sort_values()
+num_hops = df_raw[2].nunique() # Detecta si son 3 o más saltos
+
+# 2. Extraemos solo la matriz de datos numéricos (columnas 6 en adelante)
+# Aseguramos que el orden sea cronológico y por frecuencia antes de convertir
+df_sorted = df_raw.sort_values(by=['datetime', 2])
+data_raw_matrix = df_sorted.iloc[:, 6:-1].values.astype(float)
+
+# 3. El truco de magia: Re-formatear la matriz (Reshape)
+# Si tienes 3 saltos, convertimos (N*3, Bins) en (N, 3*Bins)
+try:
+    total_filas = len(tiempos_finales)
+    bins_por_fila = data_raw_matrix.shape[1]
+    data_all_numeric = data_raw_matrix.reshape(total_filas, num_hops * bins_por_fila)
+except ValueError as e:
+    print(f"⚠️ Error en dimensiones: {e}. Reintentando con método seguro...")
+    # Si falta algún salto en el archivo, el reshape fallará. 
+    # En ese caso, usamos un pivote rápido:
+    df_pivot = df_raw.pivot(index='datetime', columns=2, values=list(range(6, df_raw.shape[1]-1)))
+    data_all_numeric = df_pivot.fillna(method='ffill').values.astype(float)
+    tiempos_finales = df_pivot.index
+
+
+# --- 3. CALIBRACIÓN DE RUIDO ---
 print("🧪 Calibrando ruido de fondo...")
-
-# Seleccionamos solo las columnas que son puramente datos de intensidad
-# Ignoramos la col 'datetime' y las primeras 6 columnas de metadatos del CSV
-columnas_datos = df.iloc[:, 6:].select_dtypes(include=[np.number])
-
 if args.cal_file:
-    # OPCIÓN 2: Usar archivo externo
-    df_noise = pd.read_csv(args.cal_file, header=None, low_memory=False)
-    noise_matrix = df_noise.iloc[:, 6:].select_dtypes(include=[np.number]).values
+    # (Lógica para archivo externo si lo usas...)
+    pass 
 else:
-    # OPCIÓN 1: Usar rango de calma
+    # Extraer ruido del rango de calma (ej. 3:00 AM)
     t_start_c = pd.to_datetime(args.cal_range[0]).time()
     t_end_c = pd.to_datetime(args.cal_range[1]).time()
-    
-    mask_cal = (df['datetime'].dt.time >= t_start_c) & (df['datetime'].dt.time <= t_end_c)
-    noise_matrix = df[mask_cal].iloc[:, 6:].select_dtypes(include=[np.number]).values
+    mask_cal = (tiempos_finales.dt.time >= t_start_c) & (tiempos_finales.dt.time <= t_end_c)
+    noise_matrix = data_all_numeric[mask_cal]
 
-# Si no hay datos en el rango de calma o el rango falló
-if noise_matrix.size == 0:
-    print("⚠️ Rango de calibración vacío o no numérico. Usando mediana global de columnas de datos.")
-    perfil_ruido = np.nanmedian(columnas_datos.values, axis=0)
-else:
-    perfil_ruido = np.nanmedian(noise_matrix, axis=0)
-
-# Aplicar la resta solo a las columnas numéricas
-data_all_numeric = columnas_datos.values
+# Perfil de ruido (Mediana por cada columna de frecuencia)
+perfil_ruido = np.nanmedian(noise_matrix, axis=0) if noise_matrix.size > 0 else np.nanmedian(data_all_numeric, axis=0)
 data_calibrada = data_all_numeric - perfil_ruido
 
-# Actualizar el DataFrame original con los datos limpios
-# Usamos el índice de las columnas numéricas para asegurar precisión
-df.iloc[:, 6:6+data_calibrada.shape[1]] = data_calibrada
 
+# --- 4. RECORTES Y METADATOS ---
+f_min_total = df_raw[2].min() / 1e6
+f_step = df_raw.iloc[0, 4] / 1e6
+f_max_total = df_raw[3].max() / 1e6
 
-try:
-    # Filtrar por tiempo si se solicita
-    if args.start:
-        df = df[df['datetime'] >= pd.to_datetime(args.start)]
-    if args.end:
-        df = df[df['datetime'] <= pd.to_datetime(args.end)]
+view_min = args.fmin if args.fmin is not None else f_min_total
+view_max = args.fmax if args.fmax is not None else f_max_total
 
-    if df.empty:
-        print("Error: El rango seleccionado no contiene datos.")
-        sys.exit(1)
+col_idx_start = max(0, int((view_min - f_min_total) / f_step))
+col_idx_end = min(data_calibrada.shape[1], int((view_max - f_min_total) / f_step))
 
-    df = df.sort_values('datetime')
-
-    # Resumen en terminal
-    duracion = df['datetime'].iloc[-1] - df['datetime'].iloc[0]
-    print(f"--- Procesando: {duracion} de datos ---")
-
-except Exception as e:
-    print(f"Error al cargar archivo: {e}")
-    sys.exit(1)
-
-# --- 3. METADATOS DE FRECUENCIA ---
-f_start_file = df.iloc[0, 2]/1e6
-f_end_file = df.iloc[0, 3]/1e6
-f_step = df.iloc[0, 4]/1e6
-
-# Determinar qué columnas de frecuencia mostrar
-view_min = args.fmin if args.fmin else f_start_file
-view_max = args.fmax if args.fmax else f_end_file
-
-col_idx_start = max(6, int((view_min - f_start_file) / f_step) + 6)
-col_idx_end = min(df.shape[1], int((view_max - f_start_file) / f_step) + 6)
-
-# Extraer matriz de datos y calcular potencia
-data_limpia = df.iloc[:, col_idx_start:col_idx_end].values
+data_limpia = data_calibrada[:, col_idx_start:col_idx_end]
 data_plot = data_limpia.T
-
 
 potencia_media = np.mean(data_limpia, axis=1) #
 potencia_suavizada = pd.Series(potencia_media).rolling(window=15, center=True).mean() #
@@ -136,30 +125,25 @@ s1_down = -1 * std_p
 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(18, 14), gridspec_kw={'height_ratios': [3, 1]})
 
 # --- MARCADORES DE MEDIODÍA ---
-dias_unicos = df['datetime'].dt.date.unique()
+dias_unicos = tiempos_finales.dt.date.unique() # Cambiado df por tiempos_finales
 
 for dia in dias_unicos:
-    # Crear objeto datetime para el mediodía de ese día
     medio_dia = pd.to_datetime(f"{dia} 12:00:00")
 
-    # Solo dibujar si el mediodía está dentro del rango filtrado
-    if df['datetime'].min() <= medio_dia <= df['datetime'].max():
-        # Línea HORIZONTAL en Espectrograma (ax1)
-        # Usamos date2num porque el eje Y es tiempo
+    # Verificar si el mediodía está dentro del rango de los datos actuales
+    if tiempos_finales.min() <= medio_dia <= tiempos_finales.max():
+        # Línea vertical en Espectrograma (ax1)
         ax1.axvline(x=mdates.date2num(medio_dia), color='white', 
                 linestyle='--', alpha=0.4, linewidth=1)
 
-        ax1.text(view_min + 0.002, mdates.date2num(medio_dia), 'Mediodía Solar', 
-                 color='white', fontsize=7, va='bottom', alpha=0.6)
-
-        # Línea VERTICAL en Potencia (ax2)
+        # Línea vertical en Potencia (ax2)
         ax2.axvline(x=medio_dia, color='red', linestyle=':', alpha=0.5)
 
-# IMPORTANTE: Extent [X_min, X_max, Y_min, Y_max]
+
 # X = Frecuencia, Y = Tiempo
-x_start = mdates.date2num(df['datetime'].iloc[0])
-x_end = mdates.date2num(df['datetime'].iloc[-1])
-extent = [x_start, x_end,  view_min, view_max]
+x_start = mdates.date2num(tiempos_finales.iloc[0])
+x_end = mdates.date2num(tiempos_finales.iloc[-1])
+extent = [x_start, x_end, view_min, view_max]
 
 # Espectrograma
 v_min, v_max =  0, 15
@@ -185,20 +169,24 @@ ax1.set_ylabel("Frecuencia [MHz]")
 
 # Curva de Potencia
 
-# --- DIBUJO DE BANDAS SIGMA EN AX2 ---
-# Banda 1 Sigma (Verde tenue - Ruido normal)
-ax2.fill_between(df['datetime'], s1_down, s1_up, color='green', alpha=0.1, label='±3σ')
-ax2.fill_between(df['datetime'], s1_up, s2_up, color='yellow', alpha=0.1, label='Actividad (+2σ)')
-ax2.fill_between(df['datetime'], s2_up, s3_up, color='red', alpha=0.1, label='Evento (+3σ)')
+# --- DIBUJO DE BANDAS SIGMA EN AX2 (CORREGIDO) ---
+ax2.fill_between(tiempos_finales, s1_down, s1_up, color='green', alpha=0.1, label='±1σ')
+ax2.fill_between(tiempos_finales, s1_up, s2_up, color='yellow', alpha=0.1, label='+2σ')
+ax2.fill_between(tiempos_finales, s2_up, s3_up, color='red', alpha=0.1, label='+3σ')
 
-ax2.fill_between(df['datetime'], -s1_up, -s2_up, color='yellow', alpha=0.1, label='Actividad (+2σ)')
-ax2.fill_between(df['datetime'], -s2_up, -s3_up, color='red', alpha=0.1, label='Evento (+3σ)')
+ax2.axhline(y=0, color='blue', linestyle='-', alpha=0.3, label='Nivel Base (0 dB)')
+
+# Línea principal de potencia
+ax2.plot(tiempos_finales, potencia_final, color='orange', label='Señal Normalizada')
 
 # Línea base de la Mediana
 #ax2.axhline(y=mediana_p, color='blue', linestyle='-', alpha=0.2, label='Mediana')
 ax2.axhline(y=0, color='blue', linestyle='-', alpha=0.3, label='Nivel Base (0 dB)') #
 
-ax2.plot(df['datetime'], potencia_final, color='orange', label='Señal Normalizada') #
+
+ax2.plot(tiempos_finales, potencia_final, color='orange', label='Señal Normalizada')
+ax2.fill_between(tiempos_finales, s1_down, s1_up, color='green', alpha=0.1)
+
 
 ax2.set_xlabel("Tiempo (Local)")
 ax2.xaxis.set_major_locator(locator)
