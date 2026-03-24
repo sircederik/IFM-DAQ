@@ -105,6 +105,34 @@ class SolarAnalyzer:
                     print(f"⚠️ Colormap '{self.args.cmap}' no encontrado. Usando 'magma'.")
                     self.cmap_final = plt.get_cmap('magma')
 
+    def normalizar_datos(self):
+            """
+            Normaliza la señal (Z-Score) de forma independiente.
+            Divide el residuo por la desviación estándar del ruido.
+            """
+            if not hasattr(self.args, 'norm') or not self.args.norm:
+                return
+
+            print(f"⚖️  Aplicando Normalización Estadística (Z-Score)...")
+
+            # Reutilizamos la lógica de obtención de ruido
+            if self.args.cal and len(self.args.cal) == 1 and ":" not in self.args.cal[0]:
+                noise_matrix = self._cargar_ruido_archivo(self.args.cal[0])
+            else:
+                rango = self.args.cal if (self.args.cal and len(self.args.cal) == 2) else ["03:00", "04:00"]
+                noise_matrix = self._extraer_ruido_rango(rango)
+
+            if noise_matrix is not None and noise_matrix.size > 0:
+                perfil_mediana = np.nanmedian(noise_matrix, axis=0)
+                perfil_std = np.nanstd(noise_matrix, axis=0)
+                perfil_std[perfil_std <= 0] = 1.0  # Evitar división por cero
+
+                # Aplicamos sobre la data actual (que puede estar calibrada o no)
+                self.data_calibrada = (self.data_all - perfil_mediana) / perfil_std
+                self.stats['unidad'] = "Sigmas (σ)"
+            else:
+                print("⚠️ No se pudo normalizar: Referencia de ruido no encontrada.")
+
 
 
     def calibrar_ruido(self):
@@ -176,17 +204,15 @@ class SolarAnalyzer:
 
             if hops_ruido != hops_datos:
                 print(f"⚠️ Alerta: El archivo de ruido tiene {hops_ruido} saltos pero los datos tienen {hops_datos}.")
-            # Intentaremos seguir, pero esto suele causar el error de dimensiones
 
             # 3. ALINEACIÓN (Igual que en los datos principales)
             df_n_sorted = df_n.sort_values(by=['datetime', 2])
             tiempos_n = df_n_sorted['datetime'].unique()
             data_n_raw = df_n_sorted.iloc[:, 6:-1].values.astype(float)
 
-            bins_per_hop = data_n_raw.shape[1]
-
-            # Re-formatear para que tenga el mismo ancho que self.data_all
-            matrix_n = data_n_raw.reshape(len(tiempos_n), hops_ruido * bins_per_hop)
+            bins_objetivo = self.data_all.shape[1] // hops_ruido
+            data_n_raw = df_n_sorted.iloc[:, 6:6+bins_objetivo].values.astype(float)
+            matrix_n = data_n_raw.reshape(len(tiempos_n), hops_ruido * bins_objetivo)
 
             print(f"Matriz de ruido alineada: {matrix_n.shape}")
             return matrix_n
@@ -291,9 +317,9 @@ if __name__ == "__main__":
     parser.add_argument('--fmin', type=float)
     parser.add_argument('--fmax', type=float)
     parser.add_argument('--output', '-o')
-    # nargs='*' permite: no poner nada, poner 1 (archivo) o poner 2 (rango HH:MM HH:MM)
     parser.add_argument('--cal', nargs='*', help='Calibración: nada (3-4am), un archivo.csv, o rango "HH:MM HH:MM". Si no se pone --cal, no calibra.')
     parser.add_argument('--cmap', type=str, default='charolastra', help=cmap_help)
+    parser.add_argument('--norm', action='store_true', help='Usar normalización estadística (Z-Score)')
     args = parser.parse_args()
 
     # Flujo de ejecución limpio
@@ -301,6 +327,7 @@ if __name__ == "__main__":
     solar.cargar_y_limpiar()
     solar.alinear_espectro()
     solar.calibrar_ruido()
+    solar.normalizar_datos()
     solar.configurar_visualizacion()
     archivo_final = solar.generar_grafico()
     solar.imprimir_sumario(archivo_final)
