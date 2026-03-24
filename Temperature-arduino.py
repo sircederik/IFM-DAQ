@@ -16,14 +16,14 @@ CONFIG = {
     'PORT': '/dev/ttyUSB0',
     'BAUD': 9600,
     'FILE': "log_temperaturas.csv",
-    'MAX_SAMPLES': 50,
+    'MAX_SAMPLES': 20,
     'OFFSETS': [0.0, 0.0, 0.0, 0.0],
     # Nombres personalizados para tus sensores
-    'LABELS': ["T. Entrada", "T. Salida", "T. Ambiente", "T. Proceso"],
+    'LABELS': ["T. Disipador ", "T. Placa interior", "T. Peltier superior", "T. Ambiente"],
     # Estilos visuales: (Color, Estilo de línea)
     'ESTILOS': [
         ('#FF5733', '-'),  # Naranja rojizo sólido
-        ('#33FF57', '--'), # Verde con guiones
+        ('#82C2DF', '--'), # Verde con guiones
         ('#3357FF', '-.'), # Azul punto-guion
         ('#F333FF', ':')   # Púrpura punteado
     ]
@@ -56,7 +56,7 @@ class DAQManager:
 def configurar_grafica():
     plt.ion()
     # Usamos un estilo más moderno
-    plt.style.use('seaborn-v0_8-darkgrid') 
+    #plt.style.use('seaborn-v0_8-darkgrid') 
     fig, ax = plt.subplots(figsize=(12, 6))
     
     ax.set_title("Monitoreo Térmico en Tiempo Real - IFM-DAQ", fontsize=14, fontweight='bold')
@@ -67,10 +67,10 @@ def configurar_grafica():
     ax.yaxis.set_minor_locator(AutoMinorLocator(5)) # 5 subdivisiones por cada grado
     ax.tick_params(which='both', width=1)
     ax.tick_params(which='major', length=7)
-    ax.tick_params(which='minor', length=4, color='gray', alpha=0.5)
+    ax.tick_params(which='minor', length=4, color='gray')
 
     # --- Refinar Eje X (Formato de Tiempo) ---
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y/%M/%d\n%H:%M:%S'))
     
     # Deques: Uno para el tiempo (X) y otros para datos (Y)
     time_deque = deque(maxlen=CONFIG['MAX_SAMPLES'])
@@ -87,7 +87,7 @@ def configurar_grafica():
                       antialiased=True)
         lineas.append(ln)
 
-    legend = ax.legend(loc='upper left', frameon=True, shadow=True, fontsize=10)
+    legend = ax.legend(loc='upper left', frameon=True, shadow=True, fontsize=12)
 
     return fig, ax, time_deque, data_deques, lineas, legend
 
@@ -111,6 +111,7 @@ def actualizar_ui(ax, lineas, time_deque, data_deques, nuevos_datos, ts_obj, leg
     
     # Rotar etiquetas del tiempo para mejor lectura
     plt.xticks(rotation=20)
+    plt.grid()
     plt.pause(0.01)
 
 def main():
