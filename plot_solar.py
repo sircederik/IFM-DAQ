@@ -5,210 +5,302 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.colors import ListedColormap
+from matplotlib.colors import hsv_to_rgb
 import argparse
 import sys
 import os
-from matplotlib.colors import LogNorm, Normalize
 
 
-# --- 1. CONFIGURACIÓN DE ARGUMENTOS ---
-parser = argparse.ArgumentParser(description='Análisis Solar Morelia v3.0')
-parser.add_argument('archivos', nargs='+', help='Uno o más archivos CSV de entrada')
-parser.add_argument('--fmin', type=float, help='Frecuencia mínima (MHz)')
-parser.add_argument('--fmax', type=float, help='Frecuencia máxima (MHz)')
-parser.add_argument('--start', help='Inicio (AAAA-MM-DD HH:MM)', default=None)
-parser.add_argument('--end', help='Fin (AAAA-MM-DD HH:MM)', default=None)
-parser.add_argument('--output', '-o', help='Nombre del archivo de salida')
+class SolarAnalyzer:
+    CMAPS_COMUNES = ['charolastra', 'magma', 'inferno', 'viridis', 'plasma', 'jet', 'hot', 'gnuplot2']
 
-parser.add_argument('--cal_file', help='Archivo CSV externo solo para ruido (Opcional)')
-parser.add_argument('--cal_range', nargs=2, help='Rango HH:MM HH:MM para extraer ruido del set actual', default=["03:00", "04:00"])
+    def __init__(self, args):
+        self.args = args
+        self.df_raw = None
+        self.tiempos = None
+        self.data_all = None
+        self.data_calibrada = None
+        self.f_min_total = None
+        self.f_max_total = None
+        self.f_step = None
+        self.potencia_final = None
+        self.stats = {}
+        self.cmap_final = None
 
-args = parser.parse_args()
+    def cargar_y_limpiar(self):
+        """Carga archivos CSV y asegura que los datos sean numéricos."""
+        lista_df = []
+        print(f"📂 Cargando {len(self.args.archivos)} archivos...")
 
-# --- 2. CARGA Y UNIFICACIÓN DE SALTOS (ESTRUCTURA LIMPIA) ---
-lista_df = []
-print(f"📂 Cargando {len(args.archivos)} archivos...")
-for f in args.archivos:
-    try:
-        temp_df = pd.read_csv(f, header=None, low_memory=False)
-        
-        # 1. Creamos la columna datetime primero
-        temp_df['datetime'] = pd.to_datetime(temp_df[0] + ' ' + temp_df[1]) #
-        
-        # 2. Convertimos el bloque de datos a numérico de golpe (sin ciclos for col in...)
-        # Esto evita el PerformanceWarning y es mucho más rápido
-        temp_df.iloc[:, 6:-1] = temp_df.iloc[:, 6:-1].apply(pd.to_numeric, errors='coerce') #
-            
-        lista_df.append(temp_df)
-    except Exception as e:
-        print(f"⚠️ Error al leer {f}: {e}")
+        for f in self.args.archivos:
+            try:
+                temp_df = pd.read_csv(f, header=None, low_memory=False)
+                # Crear datetime primero para evitar fragmentación
+                temp_df['datetime'] = pd.to_datetime(temp_df[0] + ' ' + temp_df[1])
+                # Convertir bloque de datos a numérico de golpe (columnas 6 en adelante)
+                temp_df.iloc[:, 6:-1] = temp_df.iloc[:, 6:-1].apply(pd.to_numeric, errors='coerce')
+                lista_df.append(temp_df)
+            except Exception as e:
+                print(f"⚠️ Error en {f}: {e}")
 
-if not lista_df:
-    print("❌ No se pudieron cargar los archivos."); sys.exit(1)
+        if not lista_df:
+            print("❌ No hay datos para procesar."); sys.exit(1)
 
-df_raw = pd.concat(lista_df, ignore_index=True)
+        self.df_raw = pd.concat(lista_df, ignore_index=True)
 
-# --- 2. ALINEACIÓN ULTRA-RÁPIDA (SIN GROUPBY) ---
-print("🚀 Alineando saltos de frecuencia con Vectorización...")
+    def alinear_espectro(self):
+        """Une los saltos de frecuencia  mediante vectorización."""
+        print("🚀 Alineando saltos de frecuencia...")
+        tiempos_unicos = self.df_raw['datetime'].unique()
+        num_hops = self.df_raw[2].nunique()
 
-# 1. Obtenemos los tiempos únicos y cuántos saltos hay por ciclo (hops)
-tiempos_finales = df_raw['datetime'].unique()
-tiempos_finales = pd.Series(tiempos_finales).sort_values()
-num_hops = df_raw[2].nunique() # Detecta si son 3 o más saltos
+        # Ordenar para asegurar que el reshape sea coherente
+        df_sorted = self.df_raw.sort_values(by=['datetime', 2])
+        data_matrix = df_sorted.iloc[:, 6:-1].values.astype(float)
 
-# 2. Extraemos solo la matriz de datos numéricos (columnas 6 en adelante)
-# Aseguramos que el orden sea cronológico y por frecuencia antes de convertir
-df_sorted = df_raw.sort_values(by=['datetime', 2])
-data_raw_matrix = df_sorted.iloc[:, 6:-1].values.astype(float)
+        bins_per_hop = data_matrix.shape[1]
+        self.data_all = data_matrix.reshape(len(tiempos_unicos), num_hops * bins_per_hop)
+        self.tiempos = pd.Series(tiempos_unicos).sort_values()
 
-# 3. El truco de magia: Re-formatear la matriz (Reshape)
-# Si tienes 3 saltos, convertimos (N*3, Bins) en (N, 3*Bins)
-try:
-    total_filas = len(tiempos_finales)
-    bins_por_fila = data_raw_matrix.shape[1]
-    data_all_numeric = data_raw_matrix.reshape(total_filas, num_hops * bins_por_fila)
-except ValueError as e:
-    print(f"⚠️ Error en dimensiones: {e}. Reintentando con método seguro...")
-    # Si falta algún salto en el archivo, el reshape fallará. 
-    # En ese caso, usamos un pivote rápido:
-    df_pivot = df_raw.pivot(index='datetime', columns=2, values=list(range(6, df_raw.shape[1]-1)))
-    data_all_numeric = df_pivot.fillna(method='ffill').values.astype(float)
-    tiempos_finales = df_pivot.index
+        # Extraer metadatos
+        self.f_min_total = self.df_raw[2].min() / 1e6
+        self.f_max_total = self.df_raw[3].max() / 1e6
+        self.f_step = self.df_raw.iloc[0, 4] / 1e6
+
+        print(f"Matriz: {self.data_all.shape} | Hops: {num_hops}| fmin: {self.f_min_total} fmax: {self.f_max_total}")
 
 
-# --- 3. CALIBRACIÓN DE RUIDO ---
-print("🧪 Calibrando ruido de fondo...")
-if args.cal_file:
-    # (Lógica para archivo externo si lo usas...)
-    pass 
-else:
-    # Extraer ruido del rango de calma (ej. 3:00 AM)
-    t_start_c = pd.to_datetime(args.cal_range[0]).time()
-    t_end_c = pd.to_datetime(args.cal_range[1]).time()
-    mask_cal = (tiempos_finales.dt.time >= t_start_c) & (tiempos_finales.dt.time <= t_end_c)
-    noise_matrix = data_all_numeric[mask_cal]
-
-# Perfil de ruido (Mediana por cada columna de frecuencia)
-perfil_ruido = np.nanmedian(noise_matrix, axis=0) if noise_matrix.size > 0 else np.nanmedian(data_all_numeric, axis=0)
-data_calibrada = data_all_numeric - perfil_ruido
 
 
-# --- 4. RECORTES Y METADATOS ---
-f_min_total = df_raw[2].min() / 1e6
-f_step = df_raw.iloc[0, 4] / 1e6
-f_max_total = df_raw[3].max() / 1e6
+    def _get_charolastra_cmap(self):
+            """
+            Genera la paleta 'Charolastra'.
+            Basada en la lógica de color HSV de solsticedhiver (https://github.com/solsticedhiver).
+            Adaptada para la visualización de ráfagas solares en Morelia.
+            """
+            def loop(n):
+                if n > 1: return 1
+                if n < 0: return 1 - abs(n)
+                return n
 
-view_min = args.fmin if args.fmin is not None else f_min_total
-view_max = args.fmax if args.fmax is not None else f_max_total
-
-col_idx_start = max(0, int((view_min - f_min_total) / f_step))
-col_idx_end = min(data_calibrada.shape[1], int((view_max - f_min_total) / f_step))
-
-data_limpia = data_calibrada[:, col_idx_start:col_idx_end]
-data_plot = data_limpia.T
-
-potencia_media = np.mean(data_limpia, axis=1) #
-potencia_suavizada = pd.Series(potencia_media).rolling(window=15, center=True).mean() #
-nivel_base = np.nanmedian(potencia_suavizada) #
-potencia_final = potencia_suavizada - nivel_base #
-
-mediana_p = np.nanmedian(potencia_suavizada)
-
-std_p = np.nanstd(potencia_final) #
-s1_up = 1 * std_p #
-s2_up = 2 * std_p #
-s3_up = 3 * std_p #
-
-s1_down = -1 * std_p
-
-# --- 4. GRAFICACIÓN ---
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(18, 14), gridspec_kw={'height_ratios': [3, 1]})
-
-# --- MARCADORES DE MEDIODÍA ---
-dias_unicos = tiempos_finales.dt.date.unique() # Cambiado df por tiempos_finales
-
-for dia in dias_unicos:
-    medio_dia = pd.to_datetime(f"{dia} 12:00:00")
-
-    # Verificar si el mediodía está dentro del rango de los datos actuales
-    if tiempos_finales.min() <= medio_dia <= tiempos_finales.max():
-        # Línea vertical en Espectrograma (ax1)
-        ax1.axvline(x=mdates.date2num(medio_dia), color='white', 
-                linestyle='--', alpha=0.4, linewidth=1)
-
-        # Línea vertical en Potencia (ax2)
-        ax2.axvline(x=medio_dia, color='red', linestyle=':', alpha=0.5)
+            paleta = []
+            for i in range(1024):
+                g = i / 1023.0
+                # Mapeo HSV: Tono de Azul a Rojo, Brillo creciente
+                c = hsv_to_rgb([loop(0.65 - (g - 0.08)), 1, loop(0.2 + g)])
+                paleta.append(c)
+            return ListedColormap(paleta, name='charolastra')
 
 
-# X = Frecuencia, Y = Tiempo
-x_start = mdates.date2num(tiempos_finales.iloc[0])
-x_end = mdates.date2num(tiempos_finales.iloc[-1])
-extent = [x_start, x_end, view_min, view_max]
-
-# Espectrograma
-v_min, v_max =  0, 15
-im = ax1.imshow(data_plot, aspect='auto', extent=extent, cmap='magma', vmin=v_min, vmax=v_max)
-
-
-# --- REINCORPORAR COLORBAR ---
-cbar = fig.colorbar(im, ax=ax1, pad=0.01, aspect=20)
-cbar.set_label('Intensidad sobre el fondo (dB)') #
-
-# Configurar ejes de Tiempo (Y en espectrograma, X en potencia)
-locator = mdates.AutoDateLocator()
-formatter = mdates.ConciseDateFormatter(locator)
-
-ax1.xaxis.set_major_locator(locator)
-ax1.xaxis.set_major_formatter(formatter)
-ax1.set_xlabel("Tiempo (Local)")
-
-ax1.set_title(f"Análisis Radio-Solar: {view_min:.2f}-{view_max:.2f} MHz")
-
-ax1.yaxis.set_major_formatter(plt.FormatStrFormatter('%.3f'))
-ax1.set_ylabel("Frecuencia [MHz]")
-
-# Curva de Potencia
-
-# --- DIBUJO DE BANDAS SIGMA EN AX2 (CORREGIDO) ---
-ax2.fill_between(tiempos_finales, s1_down, s1_up, color='green', alpha=0.1, label='±1σ')
-ax2.fill_between(tiempos_finales, s1_up, s2_up, color='yellow', alpha=0.1, label='+2σ')
-ax2.fill_between(tiempos_finales, s2_up, s3_up, color='red', alpha=0.1, label='+3σ')
-
-ax2.axhline(y=0, color='blue', linestyle='-', alpha=0.3, label='Nivel Base (0 dB)')
-
-# Línea principal de potencia
-ax2.plot(tiempos_finales, potencia_final, color='orange', label='Señal Normalizada')
-
-# Línea base de la Mediana
-#ax2.axhline(y=mediana_p, color='blue', linestyle='-', alpha=0.2, label='Mediana')
-ax2.axhline(y=0, color='blue', linestyle='-', alpha=0.3, label='Nivel Base (0 dB)') #
+    def configurar_visualizacion(self):
+            """Selecciona el mapa de color según la preferencia del usuario."""
+            if self.args.cmap.lower() == 'charolastra':
+                self.cmap_final = self._get_charolastra_cmap()
+            else:
+                # Si no es charolastra, intenta cargar uno de Matplotlib
+                try:
+                    self.cmap_final = plt.get_cmap(self.args.cmap)
+                except ValueError:
+                    print(f"⚠️ Colormap '{self.args.cmap}' no encontrado. Usando 'magma'.")
+                    self.cmap_final = plt.get_cmap('magma')
 
 
-ax2.plot(tiempos_finales, potencia_final, color='orange', label='Señal Normalizada')
-ax2.fill_between(tiempos_finales, s1_down, s1_up, color='green', alpha=0.1)
+
+    def calibrar_ruido(self):
+        """
+        Lógica de calibración:
+        1. Si '--cal' no está presente en los argumentos -> No calibra.
+        2. Si '--cal' está presente pero vacío -> Calibra 03:00 a 04:00.
+        3. Si '--cal' tiene 1 argumento -> Se asume que es un archivo CSV.
+        4. Si '--cal' tiene 2 argumentos -> Se asume que es un rango de horas.
+        """
+
+        # CASO 1: El usuario NO escribió --cal en la terminal
+        if self.args.cal is None:
+            print("⏭️  Modo: Datos brutos (sin calibración).")
+            self.data_calibrada = self.data_all.copy()
+            self.stats['modo_cal'] = "Ninguna"
+            return
+
+        print("🧪 Iniciando proceso de calibración...")
+        noise_matrix = None
+
+        # CASO 2: Escribió --cal pero no puso argumentos (args.cal es una lista vacía [])
+        if len(self.args.cal) == 0:
+            rango = ["03:00", "04:00"]
+            print(f"  -> Usando rango por defecto: {rango}")
+            noise_matrix = self._extraer_ruido_rango(rango)
+            self.stats['modo_cal'] = f"Default ({rango[0]}-{rango[1]})"
+
+        # CASO 3: Escribió --cal archivo.csv
+        elif len(self.args.cal) == 1:
+            archivo_n = self.args.cal[0]
+            print(f"-> Cargando archivo de ruido externo: {archivo_n}")
+            noise_matrix = self._cargar_ruido_archivo(archivo_n)
+            self.stats['modo_cal'] = f"Archivo ({archivo_n})"
+
+        # CASO 4: Escribió --cal 12:00 13:00
+        elif len(self.args.cal) == 2:
+            rango = self.args.cal
+            print(f"  -> Usando rango especificado: {rango}")
+            noise_matrix = self._extraer_ruido_rango(rango)
+            self.stats['modo_cal'] = f"Rango manual ({rango[0]}-{rango[1]})"
+
+        # CÁLCULO FINAL
+        if noise_matrix is not None and noise_matrix.size > 0:
+            perfil_ruido = np.nanmedian(noise_matrix, axis=0)
+            self.data_calibrada = self.data_all - perfil_ruido
+        else:
+            print("⚠️ No se pudo obtener matriz de ruido. Usando datos brutos.")
+            self.data_calibrada = self.data_all.copy()
+
+    def _extraer_ruido_rango(self, rango):
+        """Método privado para filtrar por tiempo."""
+        t_start = pd.to_datetime(rango[0]).time()
+        t_end = pd.to_datetime(rango[1]).time()
+        mask = (self.tiempos.dt.time >= t_start) & (self.tiempos.dt.time <= t_end)
+        return self.data_all[mask]
+
+    def _cargar_ruido_archivo(self, ruta):
+        """Procesa un archivo externo alineando sus saltos de frecuencia."""
+        try:
+            # 1. Carga básica
+            df_n = pd.read_csv(ruta, header=None, low_memory=False)
+            df_n['datetime'] = pd.to_datetime(df_n[0] + ' ' + df_n[1])
+            df_n.iloc[:, 6:-1] = df_n.iloc[:, 6:-1].apply(pd.to_numeric, errors='coerce')
+
+            # 2. Detectar cuántos saltos (hops) tiene el archivo de ruido
+            hops_ruido = df_n[2].nunique()
+            hops_datos = self.df_raw[2].nunique()
+
+            if hops_ruido != hops_datos:
+                print(f"⚠️ Alerta: El archivo de ruido tiene {hops_ruido} saltos pero los datos tienen {hops_datos}.")
+            # Intentaremos seguir, pero esto suele causar el error de dimensiones
+
+            # 3. ALINEACIÓN (Igual que en los datos principales)
+            df_n_sorted = df_n.sort_values(by=['datetime', 2])
+            tiempos_n = df_n_sorted['datetime'].unique()
+            data_n_raw = df_n_sorted.iloc[:, 6:-1].values.astype(float)
+
+            bins_per_hop = data_n_raw.shape[1]
+
+            # Re-formatear para que tenga el mismo ancho que self.data_all
+            matrix_n = data_n_raw.reshape(len(tiempos_n), hops_ruido * bins_per_hop)
+
+            print(f"Matriz de ruido alineada: {matrix_n.shape}")
+            return matrix_n
+
+        except Exception as e:
+            print(f"❌ Error al procesar archivo de calibración: {e}")
+            return None
+
+    def procesar_potencia(self, data_recortada):
+        """Calcula la curva de flujo relativo y estadísticas de ráfagas."""
+        potencia_media = np.nanmean(data_recortada, axis=1)
+        self.potencia_final = pd.Series(potencia_media).rolling(window=20, center=True).mean()
+
+        # Normalizar a 0 dB
+        nivel_ref = np.nanmedian(self.potencia_final)
+        self.potencia_final -= nivel_ref
+
+        std_p = np.nanstd(self.potencia_final)
+        self.stats = {'std': std_p, 'base_db': nivel_ref}
+        return self.potencia_final
+
+    def generar_grafico(self):
+        """Crea la visualización final ax1 (espectro) y ax2 (potencia)."""
+        # 1. Recorte de frecuencias solicitado
+        fmin = self.args.fmin if self.args.fmin else self.f_min_total
+        fmax = self.args.fmax if self.args.fmax else self.f_max_total
+        idx_s = int((fmin - self.f_min_total) / self.f_step)
+        idx_e = int((fmax - self.f_min_total) / self.f_step)
+        data_plot = self.data_calibrada[:, idx_s:idx_e]
+    
+        # CÁLCULO DINÁMICO DE ESCALA
+        # El vmin se ajusta al "piso" de los datos actuales
+        v_min_auto = np.nanpercentile(data_plot, 5)   # El 5% más bajo
+        # El vmax se ajusta a las ráfagas, dejando un margen
+        v_max_auto = np.nanpercentile(data_plot, 99.5) # El tope del 99.5%
+        rango = v_max_auto - v_min_auto
+        if rango < 5: # Si hay muy poco contraste, forzamos un mínimo de 10dB de rango
+            v_max_auto = v_min_auto + 10
+
+        print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} dB")
+        potencia = self.procesar_potencia(data_plot)
+
+        # 2. Setup de figura
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 12), gridspec_kw={'height_ratios': [3, 1]})
+
+        # Espectrograma
+
+        extent = [mdates.date2num(self.tiempos.iloc[0]), mdates.date2num(self.tiempos.iloc[-1]), fmin, fmax]
+        im = ax1.imshow(data_plot.T, aspect='auto', extent=extent, 
+                        cmap=self.cmap_final, 
+                        vmin=v_min_auto, 
+                        vmax=v_max_auto)
+
+        fig.colorbar(im, ax=ax1, label='Intensidad (dB)')
+
+        # Potencia y Bandas Sigma
+        std = self.stats['std']
+        ax2.fill_between(self.tiempos, -std, std, color='gray', alpha=0.2, label='Ruido Base')
+        ax2.fill_between(self.tiempos, std, 2*std, color='yellow', alpha=0.15)
+        ax2.fill_between(self.tiempos, 2*std, 3*std, color='red', alpha=0.15, label='Evento')
+        ax2.plot(self.tiempos, potencia, color='orange', linewidth=1)
+
+        # Formato de tiempo
+        locator = mdates.AutoDateLocator()
+        formatter = mdates.ConciseDateFormatter(locator)
+        for ax in [ax1, ax2]:
+            ax.xaxis.set_major_locator(locator)
+            ax.xaxis.set_major_formatter(formatter)
+            ax.grid(True, alpha=0.2)
+
+        ax1.set_title(f"Análisis Radioastronómico Solar: {fmin}-{fmax} MHz")
+        ax2.set_ylabel("Flujo Relativo (dB)")
+
+        output = self.args.output if self.args.output else "solar_plot.png"
+        plt.savefig(output, dpi=300, bbox_inches='tight')
+        return output
+
+    def imprimir_sumario(self, output_file):
+        """Muestra el reporte final en consola."""
+        print("\n" + "="*45)
+        print("📊 SUMARIO DE PROCESAMIENTO")
+        print("="*45)
+        print(f"📅 Periodo:   {self.tiempos.min()} -> {self.tiempos.max()}")
+        print(f"📡 Espectro:  {self.f_min_total:.2f} a {self.f_max_total:.2f} MHz")
+        print(f"📏 Res. Bin:  {self.f_step*1000:.2f} kHz")
+        print(f"⚙️  Nivel Base: {self.stats['base_db']:.2f} dB")
+        print(f"✅ Resultado: {output_file}")
+        print("="*45)
+
+# --- INICIO DEL PROGRAMA ---
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(
+        description='Analizador Solar Modular - Basado en radioastronomía de baja frecuencia.',
+        formatter_class=argparse.RawTextHelpFormatter # Para que respete los saltos de línea en la ayuda
+    )
 
 
-ax2.set_xlabel("Tiempo (Local)")
-ax2.xaxis.set_major_locator(locator)
-ax2.xaxis.set_major_formatter(formatter)
-ax2.set_ylabel("Flujo Relativo (dB)") #
-ax2.grid(True, alpha=0.3)
+    cmap_help = f"Paleta de colores a utilizar.\nOpciones comunes: {', '.join(SolarAnalyzer.CMAPS_COMUNES)}\n(por defecto: charolastra)"
 
-for ax in [ax1, ax2]:
-    ax.tick_params(axis='x', rotation=30, labelsize=8)
-    ax.tick_params(labelsize=10)
+    parser.add_argument('archivos', nargs='+', help='Archivos CSV')
+    parser.add_argument('--fmin', type=float)
+    parser.add_argument('--fmax', type=float)
+    parser.add_argument('--output', '-o')
+    # nargs='*' permite: no poner nada, poner 1 (archivo) o poner 2 (rango HH:MM HH:MM)
+    parser.add_argument('--cal', nargs='*', help='Calibración: nada (3-4am), un archivo.csv, o rango "HH:MM HH:MM". Si no se pone --cal, no calibra.')
+    parser.add_argument('--cmap', type=str, default='charolastra', help=cmap_help)
+    args = parser.parse_args()
 
-plt.subplots_adjust(left=0.1, right=0.85, top=0.92, bottom=0.1, hspace=0.3)
-
-if not args.output:
-    # Genera un nombre basado en las fechas reales de los datos procesados
-    fecha_inicio = df['datetime'].iloc[0].strftime('%Y%m%d_%H%M')
-    fecha_fin = df['datetime'].iloc[-1].strftime('%Y%m%d_%H%M')
-    output_file = f"solar_{fecha_inicio}_to_{fecha_fin}.png"
-else:
-    output_file = args.output if args.output else os.path.splitext(args.archivos[0])[0] + ".png"
-
-plt.rcParams.update({'font.size': 12})
-
-plt.savefig(output_file, dpi=300)
-print(f"Éxito: Imagen guardada como {output_file}")
+    # Flujo de ejecución limpio
+    solar = SolarAnalyzer(args)
+    solar.cargar_y_limpiar()
+    solar.alinear_espectro()
+    solar.calibrar_ruido()
+    solar.configurar_visualizacion()
+    archivo_final = solar.generar_grafico()
+    solar.imprimir_sumario(archivo_final)
