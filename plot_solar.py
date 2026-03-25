@@ -71,6 +71,21 @@ class SolarAnalyzer:
         print(f"Matriz: {self.data_all.shape} | Hops: {num_hops}| fmin: {self.f_min_total} fmax: {self.f_max_total}")
 
 
+    def _generar_nombre_default(self):
+            """Genera un nombre de archivo basado en fechas, frecuencias y procesos."""
+            # Extraer fechas para el nombre (formato YYYYMMDD_HHMM)
+            inicio = self.tiempos.min().strftime('%Y%m%d_%H%M')
+            fin = self.tiempos.max().strftime('%Y%m%d_%H%M')
+            res_khz = int(self.f_step * 1000)
+            # Detectar sufijos de procesamiento
+            suffix_cal = "_CAL" if self.args.cal is not None else ""
+            suffix_norm = "_NORM" if hasattr(self.args, 'norm') and self.args.norm else ""
+            
+            # Reemplazar caracteres problemáticos en el mapa de color
+            cmap_name = self.args.cmap.lower()
+
+            nombre = f"SOLAR_{inicio}-{fin}_{res_khz}k_{cmap_name}{suffix_cal}{suffix_norm}.png"
+            return nombre
 
 
     def _get_charolastra_cmap(self):
@@ -286,9 +301,15 @@ class SolarAnalyzer:
         ax1.set_title(f"Análisis Radioastronómico Solar: {fmin}-{fmax} MHz")
         ax2.set_ylabel("Flujo Relativo (dB)")
 
-        output = self.args.output if self.args.output else "solar_plot.png"
-        plt.savefig(output, dpi=300, bbox_inches='tight')
-        return output
+        if self.args.output:
+            output_name = self.args.output
+        else:
+            output_name = self._generar_nombre_default()
+
+        plt.savefig(output_name, dpi=300, bbox_inches='tight')
+        print(f"✅ Gráfico guardado como: {output_name}")
+        return output_name
+
 
     def imprimir_sumario(self, output_file):
         """Muestra el reporte final en consola."""
