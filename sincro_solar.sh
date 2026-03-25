@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # --- CONFIGURACIÓN ---
-FREQ_RANGE="16M:24M:1k"
-GAIN="0"
-INTEGRATION="10s"
-DURATION="8h"
+FREQ_RANGE="16M:24M:20k"
+GAIN="40"
+INTEGRATION="1s"
+DURATION="2h"
 LOCAL_DIR="$HOME/capturas_solar"
 REMOTE_USER="space-weather"
 REMOTE_IP="148.216.53.34"
@@ -29,7 +29,7 @@ while true; do
     # e inmediatamente vuelve al inicio del 'while' para empezar el nuevo rtl_power.
     (
         echo "[$(date +%T)] Sincronización iniciada para $FILE_NAME..."
-        rsync -avz --partial --remove-source-files "$LOCAL_DIR/*.csv" "$REMOTE_USER@$REMOTE_IP:$REMOTE_DIR"
+        rsync -avz --partial --remove-source-files $LOCAL_DIR/ $REMOTE_USER@$REMOTE_IP:$REMOTE_DIR
         
         if [ $? -eq 0 ]; then
             echo "[$(date +%T)] Sincro OK: $FILE_NAME subido y borrado."
