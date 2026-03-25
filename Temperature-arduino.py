@@ -53,6 +53,10 @@ class DAQManager:
     def cerrar(self):
         if self.ser: self.ser.close()
 
+def generar_nombre_archivo(basename="log_temperatura"):
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"{basename}_{timestamp}.csv"
+
 def configurar_grafica():
     plt.ion()
     # Usamos un estilo más moderno
@@ -117,7 +121,7 @@ def actualizar_ui(ax, lineas, time_deque, data_deques, nuevos_datos, ts_obj, leg
 def main():
     daq = DAQManager(CONFIG['PORT'], CONFIG['BAUD'])
     fig, ax, time_deque, data_deques, lineas, legend = configurar_grafica()
-
+    CONFIG['FILE'] = generar_nombre_archivo()
     try:
         with open(CONFIG['FILE'], 'a', newline='') as f:
             writer = csv.writer(f)
