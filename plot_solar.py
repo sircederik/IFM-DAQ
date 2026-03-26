@@ -239,14 +239,18 @@ class SolarAnalyzer:
     def procesar_potencia(self, data_recortada):
         """Calcula la curva de flujo relativo y estadísticas de ráfagas."""
         potencia_media = np.nanmean(data_recortada, axis=1)
-        self.potencia_final = pd.Series(potencia_media).rolling(window=20, center=True).mean()
+        self.potencia_final = pd.Series(potencia_media).rolling(window=10, center=True).mean()
+        mediana=self.potencia_final.median()
+        centrada=self.potencia_final-mediana 
+        sigma_final=centrada.std()
 
-        # Normalizar a 0 dB
-        nivel_ref = np.nanmedian(self.potencia_final)
-        self.potencia_final -= nivel_ref
-
-        std_p = np.nanstd(self.potencia_final)
-        self.stats = {'std': std_p, 'base_db': nivel_ref}
+        if hasattr(self.args, 'norm') and self.args.norm:
+            self.potencia_final = centrada / sigma_final
+            unidad_label = "Sigmas (σ)"
+        else:
+            self.potencia_final = centrada
+            unidad_label = "dB"
+        self.stats.update({'std': sigma_final, 'base_db': mediana, 'unidad': unidad_label})
         return self.potencia_final
 
     def generar_grafico(self):
@@ -257,7 +261,7 @@ class SolarAnalyzer:
         idx_s = int((fmin - self.f_min_total) / self.f_step)
         idx_e = int((fmax - self.f_min_total) / self.f_step)
         data_plot = self.data_calibrada[:, idx_s:idx_e]
-    
+
         # CÁLCULO DINÁMICO DE ESCALA
         # El vmin se ajusta al "piso" de los datos actuales
         v_min_auto = np.nanpercentile(data_plot, 5)   # El 5% más bajo
@@ -267,7 +271,13 @@ class SolarAnalyzer:
         if rango < 5: # Si hay muy poco contraste, forzamos un mínimo de 10dB de rango
             v_max_auto = v_min_auto + 10
 
-        print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} dB")
+        if hasattr(self.args, 'norm') and self.args.norm:
+            unidad = "Sigmas (σ)"
+            print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} Sigmas (σ)")
+        else:
+            unidad = "dB"
+            print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} dB")
+
         potencia = self.procesar_potencia(data_plot)
 
         # 2. Setup de figura
@@ -281,13 +291,33 @@ class SolarAnalyzer:
                         vmin=v_min_auto, 
                         vmax=v_max_auto)
 
-        fig.colorbar(im, ax=ax1, label='Intensidad (dB)')
+        fig.colorbar(im, ax=ax1, label=f'Intensidad {unidad}')
+
+
+        # Definimos los niveles según si está normalizado o no
+        if hasattr(self.args, 'norm') and self.args.norm:
+            # En modo Sigma, las bandas son fijas: 1, 2 y 3
+            s1, s2, s3, s4, s5, s6 = 1.0, 2.0, 3.0, 4.0, 5.0 ,6.0
+            unidad_txt = "σ"
+        else:
+            # En modo dB, usamos la desviación estándar calculada
+            s1 = self.stats.get('std', 0.1)
+            s2, s3 , s4, s5, s6= 2*s1, 3*s1, 4*s1, 5*s1, 6*s1
+            unidad_txt = "dB"
+
 
         # Potencia y Bandas Sigma
-        std = self.stats['std']
-        ax2.fill_between(self.tiempos, -std, std, color='gray', alpha=0.2, label='Ruido Base')
-        ax2.fill_between(self.tiempos, std, 2*std, color='yellow', alpha=0.15)
-        ax2.fill_between(self.tiempos, 2*std, 3*std, color='red', alpha=0.15, label='Evento')
+
+        # Dibujar las bandas de confianza
+        ax2.axhspan(-s1, s1, color='gray', alpha=0.15, label=f'1{unidad_txt} (Ruido)')
+        ax2.axhspan(s1, s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
+        ax2.axhspan(-s1, -s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
+        ax2.axhspan(s2, s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
+        ax2.axhspan(-s2, -s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
+
+        # Opcional: Línea en el cero para referencia técnica
+        ax2.axhline(0, color='white', linewidth=0.8, linestyle='--', alpha=0.5)
+
         ax2.plot(self.tiempos, potencia, color='orange', linewidth=1)
 
         # Formato de tiempo
@@ -299,7 +329,7 @@ class SolarAnalyzer:
             ax.grid(True, alpha=0.2)
 
         ax1.set_title(f"Análisis Radioastronómico Solar: {fmin}-{fmax} MHz")
-        ax2.set_ylabel("Flujo Relativo (dB)")
+        ax2.set_ylabel(f"Flujo Relativo {unidad}")
 
         if self.args.output:
             output_name = self.args.output
