@@ -239,7 +239,7 @@ class SolarAnalyzer:
     def procesar_potencia(self, data_recortada):
         """Calcula la curva de flujo relativo y estadísticas de ráfagas."""
         potencia_media = np.nanmean(data_recortada, axis=1)
-        self.potencia_final = pd.Series(potencia_media).rolling(window=10, center=True).mean()
+        self.potencia_final = pd.Series(potencia_media).rolling(window=8, center=True).mean()
         mediana=self.potencia_final.median()
         centrada=self.potencia_final-mediana 
         sigma_final=centrada.std()
@@ -317,6 +317,10 @@ class SolarAnalyzer:
 
         # Opcional: Línea en el cero para referencia técnica
         ax2.axhline(0, color='white', linewidth=0.8, linestyle='--', alpha=0.5)
+        # Ajustar límites del eje Y dinámicamente
+        ymax = max(s3, self.potencia_final.max() * 1.2)
+        ymin = min(-s1, self.potencia_final.min() * 1.2)
+        ax2.set_ylim(ymin, ymax)
 
         ax2.plot(self.tiempos, potencia, color='orange', linewidth=1)
 
