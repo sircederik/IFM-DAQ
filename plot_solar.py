@@ -38,6 +38,7 @@ class SolarAnalyzer:
                 temp_df = pd.read_csv(f, header=None, low_memory=False)
                 # Crear datetime primero para evitar fragmentación
                 temp_df['datetime'] = pd.to_datetime(temp_df[0] + ' ' + temp_df[1])
+                temp_df['datetime'] = (temp_df['datetime'].dt.tz_localize('America/Mexico_City', ambiguous='infer').dt.tz_convert('UTC'))
                 # Convertir bloque de datos a numérico de golpe (columnas 6 en adelante)
                 temp_df.iloc[:, 6:-1] = temp_df.iloc[:, 6:-1].apply(pd.to_numeric, errors='coerce')
                 lista_df.append(temp_df)
@@ -306,8 +307,7 @@ class SolarAnalyzer:
             unidad_txt = "dB"
 
 
-        # Potencia y Bandas Sigma
-
+        ax1.set_xlabel(f"Tiempo [UTC]")
         # Dibujar las bandas de confianza
         ax2.axhspan(-s1, s1, color='gray', alpha=0.15, label=f'1{unidad_txt} (Ruido)')
         ax2.axhspan(s1, s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
@@ -321,7 +321,7 @@ class SolarAnalyzer:
         ymax = max(s3, self.potencia_final.max() * 1.2)
         ymin = min(-s1, self.potencia_final.min() * 1.2)
         ax2.set_ylim(ymin, ymax)
-
+        ax2.set_xlabel(f"Tiempo [UTC]")
         ax2.plot(self.tiempos, potencia, color='orange', linewidth=1)
 
         # Formato de tiempo
