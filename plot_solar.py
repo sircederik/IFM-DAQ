@@ -27,10 +27,15 @@ class SolarAnalyzer:
         self.potencia_final = None
         self.stats = {}
         self.cmap_final = None
+        self.freqs = None
+        self.indices_inicio_archivo = []
 
     def cargar_y_limpiar(self):
         """Carga archivos CSV y asegura que los datos sean numéricos."""
         lista_df = []
+        self.indices_inicio_archivo = []
+        indice_actual=0
+
         print(f"📂 Cargando {len(self.args.archivos)} archivos...")
 
         for f in self.args.archivos:
@@ -42,6 +47,9 @@ class SolarAnalyzer:
                 # Convertir bloque de datos a numérico de golpe (columnas 6 en adelante)
                 temp_df.iloc[:, 6:-1] = temp_df.iloc[:, 6:-1].apply(pd.to_numeric, errors='coerce')
                 lista_df.append(temp_df)
+                self.indices_inicio_archivo.append(indice_actual)
+                indice_actual += temp_df.shape[0]
+
             except Exception as e:
                 print(f"⚠️ Error en {f}: {e}")
 
@@ -49,6 +57,8 @@ class SolarAnalyzer:
             print("❌ No hay datos para procesar."); sys.exit(1)
 
         self.df_raw = pd.concat(lista_df, ignore_index=True)
+        print(f"✅ Carga completa. {len(lista_df)} archivos unidos.")
+        print(f"📍 Costuras detectadas en índices: {self.indices_inicio_archivo}")
 
     def alinear_espectro(self):
         """Une los saltos de frecuencia  mediante vectorización."""
@@ -68,7 +78,7 @@ class SolarAnalyzer:
         self.f_min_total = self.df_raw[2].min() / 1e6
         self.f_max_total = self.df_raw[3].max() / 1e6
         self.f_step = self.df_raw.iloc[0, 4] / 1e6
-
+        self.freqs = np.linspace(self.f_min_total, self.f_max_total, self.data_all.shape[1])
         print(f"Matriz: {self.data_all.shape} | Hops: {num_hops}| fmin: {self.f_min_total} fmax: {self.f_max_total}")
 
 
@@ -123,33 +133,64 @@ class SolarAnalyzer:
 
     def normalizar_datos(self):
             """
-            Normaliza la señal (Z-Score) de forma independiente.
-            Divide el residuo por la desviación estándar del ruido.
+            Normaliza la señal (Z-Score) usando la estadística de la observación actual.
+            Transforma los datos en 'Sigmas' sobre el nivel de quietud del receptor.
             """
-            if not hasattr(self.args, 'norm') or not self.args.norm:
-                return
 
-            print(f"⚖️  Aplicando Normalización Estadística (Z-Score)...")
+            print(f"⚖️Aplicando Normalización Estadística Autosuficiente (Z-Score)...")
 
-            # Reutilizamos la lógica de obtención de ruido
-            if self.args.cal and len(self.args.cal) == 1 and ":" not in self.args.cal[0]:
-                noise_matrix = self._cargar_ruido_archivo(self.args.cal[0])
-            else:
-                rango = self.args.cal if (self.args.cal and len(self.args.cal) == 2) else ["03:00", "04:00"]
-                noise_matrix = self._extraer_ruido_rango(rango)
+            # PASO 1: Usar la data actual completa como su propia referencia
+            # Usamos la mediana en el eje del tiempo (axis=0) para cada frecuencia
+            # La mediana es inmune a ráfagas solares o interferencias breves.
+            perfil_mediana = np.nanmedian(self.data_all, axis=0)
 
-            if noise_matrix is not None and noise_matrix.size > 0:
-                perfil_mediana = np.nanmedian(noise_matrix, axis=0)
-                perfil_std = np.nanstd(noise_matrix, axis=0)
-                perfil_std[perfil_std <= 0] = 1.0  # Evitar división por cero
+            # PASO 2: Calcular la desviación estándar (ruido base)
+            # Esto nos dice qué tan 'ruidoso' es cada canal de frecuencia.
+            perfil_std = np.nanstd(self.data_all, axis=0)
 
-                # Aplicamos sobre la data actual (que puede estar calibrada o no)
-                self.data_calibrada = (self.data_all - perfil_mediana) / perfil_std
-                self.stats['unidad'] = "Sigmas (σ)"
-            else:
-                print("⚠️ No se pudo normalizar: Referencia de ruido no encontrada.")
+            # Seguridad: Evitar división por cero o por canales muertos
+            perfil_std[perfil_std <= 0] = 1.0  
 
+            # PASO 3: Aplicar la transformación Z-Score
+            # (Dato - Centro) / Dispersión
+            # Esto centra el 'piso' en 0 y mide todo en unidades de desviación estándar (σ)
+            self.data_calibrada = (self.data_all - perfil_mediana) / perfil_std
 
+            self.stats['unidad'] = "Sigmas (σ)"
+            print("✅ Normalización completada con éxito sobre los datos locales.")
+
+    def obtener_limites_raw(self, data):
+        """
+        Calcula vmin/vmax para datos brutos (dB o cuentas).
+        Evita que el ruido base o los picos de interferencia quemen la imagen.
+        """
+        # El vmin debe estar justo en el 'piso' del ruido (percentil 10)
+        # Ignoramos el 10% más bajo para no oscurecer demasiado por 'hoyos' de datos
+        v_min_auto = np.nanpercentile(data, 10)
+
+        # El vmax se ajusta al tope del 99.5% de los datos
+        v_max_auto = np.nanpercentile(data, 99.5)
+
+        # Añadimos un pequeño margen de maniobra (headroom)
+        rango = v_max_auto - v_min_auto
+        vmin = v_min_auto
+        vmax = v_max_auto + (rango * 0.1) 
+
+        print(f"📊 Escala RAW: {vmin:.2f} a {vmax:.2f} (Unidades originales)")
+        return vmin, vmax
+
+    def preparar_data_visual_raw(self):
+        """
+        Resta el background estático para resaltar ráfagas sin normalizar.
+        Mantiene la escala de intensidad original.
+        """
+        # Calculamos el perfil de ruido base de la estación en Morelia
+        background = np.nanmedian(self.data_all, axis=0)
+        
+        # Restamos el fondo: el ruido base ahora será 0, pero los picos 
+        # conservarán su valor real sobre el piso de ruido.
+        data_visual = self.data_all - background
+        return data_visual
 
     def calibrar_ruido(self):
         """
@@ -162,7 +203,7 @@ class SolarAnalyzer:
 
         # CASO 1: El usuario NO escribió --cal en la terminal
         if self.args.cal is None:
-            print("⏭️  Modo: Datos brutos (sin calibración).")
+            print("⏭️ Modo: Datos brutos (sin calibración).")
             self.data_calibrada = self.data_all.copy()
             self.stats['modo_cal'] = "Ninguna"
             return
@@ -237,6 +278,29 @@ class SolarAnalyzer:
             print(f"❌ Error al procesar archivo de calibración: {e}")
             return None
 
+    def detectar_eventos_transitorios(self, umbral=6.0):
+        """
+        Localiza píxeles que exceden el umbral de sigmas y devuelve sus coordenadas reales.
+        """
+        idx_t, idx_f = np.where(self.data_calibrada > umbral)
+        
+        eventos = []
+        if len(idx_t) > 0:
+            print(f"🎯 Detectados {len(idx_t)} píxeles sobre {umbral}σ")
+            for i in range(len(idx_t)):
+                t_idx, f_idx = idx_t[i], idx_f[i]
+                evento = {
+                    'tiempo': self.tiempos[t_idx],
+                    'frecuencia': self.freqs[f_idx],
+                    'intensidad': self.data_calibrada[t_idx, f_idx]
+                }
+                eventos.append(evento)
+                # Solo imprimimos los más significativos si son demasiados
+                if i < 30: 
+                    print(f"   - [{evento['tiempo'].strftime('%H:%M:%S')}] "
+                          f"{evento['frecuencia']:.2f} MHz -> {evento['intensidad']:.2f}σ")
+        return eventos
+
     def procesar_potencia(self, data_recortada):
         """Calcula la curva de flujo relativo y estadísticas de ráfagas."""
         potencia_media = np.nanmean(data_recortada, axis=1)
@@ -254,6 +318,25 @@ class SolarAnalyzer:
         self.stats.update({'std': sigma_final, 'base_db': mediana, 'unidad': unidad_label})
         return self.potencia_final
 
+    def limpiar_transitorios_de_archivo(self, ancho_segundos=3):
+        """
+        Identifica las uniones de archivos y elimina el 'latigazo' inicial.
+        Esto evita falsos positivos de 8 sigmas.
+        """
+        if self.indices_inicio_archivo is None:
+            return
+
+        print("🧹 Limpiando transitorios de conmutación...")
+        # Por cada inicio de archivo, borramos los primeros 3 segundos
+        for inicio in self.indices_inicio_archivo:
+            if inicio == 0: continue # El primer archivo es el inicio real
+
+            # Aplicamos un 'blanking' (ponemos el valor de la mediana)
+            # para que el Z-Score no detecte un pico falso.
+            self.data_all[inicio:inicio+ancho_segundos, :] = np.nanmedian(self.data_all, axis=0)
+            print(f'{inicio}') ##esta parte necesita trabajo, algún canál está saturado
+        print("✨ Datos saneados. Listos para normalización.")
+
     def generar_grafico(self):
         """Crea la visualización final ax1 (espectro) y ax2 (potencia)."""
         # 1. Recorte de frecuencias solicitado
@@ -263,24 +346,26 @@ class SolarAnalyzer:
         idx_e = int((fmax - self.f_min_total) / self.f_step)
         data_plot = self.data_calibrada[:, idx_s:idx_e]
 
-        # CÁLCULO DINÁMICO DE ESCALA
-        # El vmin se ajusta al "piso" de los datos actuales
-        v_min_auto = np.nanpercentile(data_plot, 5)   # El 5% más bajo
-        # El vmax se ajusta a las ráfagas, dejando un margen
-        v_max_auto = np.nanpercentile(data_plot, 99.5) # El tope del 99.5%
-        rango = v_max_auto - v_min_auto
-        if rango < 5: # Si hay muy poco contraste, forzamos un mínimo de 10dB de rango
-            v_max_auto = v_min_auto + 10
-
+        
         if hasattr(self.args, 'norm') and self.args.norm:
             unidad = "Sigmas (σ)"
+            # CÁLCULO DINÁMICO DE ESCALA
+            # El vmin se ajusta al "piso" de los datos actuales
+            v_min_auto = -0.5 #np.nanpercentile(data_plot, 2)   # El 5% más bajo
+            # El vmax se ajusta a las ráfagas, dejando un margen
+            v_max_auto = 3.5 #np.nanmax(self.data_calibrada) 
+            rango = v_max_auto - v_min_auto
             print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} Sigmas (σ)")
         else:
-            unidad = "dB"
+            v_min_auto, v_max_auto = self.obtener_limites_raw(data_plot)
+            unidad = "Potencia Relativa (Unidades Raw) dB"
+
             print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} dB")
 
         potencia = self.procesar_potencia(data_plot)
 
+        print(f"Máximo detectado: {np.nanmax(self.data_calibrada):.2f} sigmas")
+        print(f"Promedio de la data: {np.nanmean(self.data_calibrada):.2f} sigmas")
         # 2. Setup de figura
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 12), gridspec_kw={'height_ratios': [3, 1]})
 
@@ -290,7 +375,8 @@ class SolarAnalyzer:
         im = ax1.imshow(data_plot.T, aspect='auto', extent=extent, 
                         cmap=self.cmap_final, 
                         vmin=v_min_auto, 
-                        vmax=v_max_auto)
+                        vmax=v_max_auto,
+                        origin='lower')
 
         fig.colorbar(im, ax=ax1, label=f'Intensidad {unidad}')
 
@@ -382,7 +468,11 @@ if __name__ == "__main__":
     solar.cargar_y_limpiar()
     solar.alinear_espectro()
     solar.calibrar_ruido()
-    solar.normalizar_datos()
+    if args.norm:
+        solar.limpiar_transitorios_de_archivo(ancho_segundos=5)
+        solar.normalizar_datos()
+
     solar.configurar_visualizacion()
     archivo_final = solar.generar_grafico()
     solar.imprimir_sumario(archivo_final)
+    solar.detectar_eventos_transitorios(umbral=6)
