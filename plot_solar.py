@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import gc
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -37,19 +38,19 @@ class SolarAnalyzer:
         indice_actual=0
 
         print(f"📂 Cargando {len(self.args.archivos)} archivos...")
-
         for f in self.args.archivos:
             try:
                 temp_df = pd.read_csv(f, header=None, low_memory=False)
                 # Crear datetime primero para evitar fragmentación
                 temp_df['datetime'] = pd.to_datetime(temp_df[0] + ' ' + temp_df[1])
-                temp_df['datetime'] = (temp_df['datetime'].dt.tz_localize('America/Mexico_City', ambiguous='infer').dt.tz_convert('UTC'))
+                #temp_df['datetime'] = (temp_df['datetime'].dt.tz_localize('America/Mexico_City', ambiguous='infer').dt.tz_convert('UTC'))
                 # Convertir bloque de datos a numérico de golpe (columnas 6 en adelante)
                 temp_df.iloc[:, 6:-1] = temp_df.iloc[:, 6:-1].apply(pd.to_numeric, errors='coerce')
                 lista_df.append(temp_df)
                 self.indices_inicio_archivo.append(indice_actual)
                 indice_actual += temp_df.shape[0]
-
+                del temp_df
+                gc.collect()
             except Exception as e:
                 print(f"⚠️ Error en {f}: {e}")
 
@@ -63,24 +64,27 @@ class SolarAnalyzer:
     def alinear_espectro(self):
         """Une los saltos de frecuencia  mediante vectorización."""
         print("🚀 Alineando saltos de frecuencia...")
-        tiempos_unicos = self.df_raw['datetime'].unique()
         num_hops = self.df_raw[2].nunique()
+        tiempos_unicos = self.df_raw['datetime'].unique()
+
+        self.f_min_total = self.df_raw[2].min() / 1e6
+        self.f_max_total = self.df_raw[3].max() / 1e6
+        self.f_step = self.df_raw.iloc[0, 4] / 1e6
 
         # Ordenar para asegurar que el reshape sea coherente
-        df_sorted = self.df_raw.sort_values(by=['datetime', 2])
-        data_matrix = df_sorted.iloc[:, 6:-1].values.astype(float)
+        self.df_raw.sort_values(by=['datetime', 2], inplace=True)
+        data_matrix = data_matrix = self.df_raw.iloc[:, 6:-1].values.astype(np.float32) 
+        del self.df_raw
+        gc.collect()
 
         bins_per_hop = data_matrix.shape[1]
         self.data_all = data_matrix.reshape(len(tiempos_unicos), num_hops * bins_per_hop)
         self.tiempos = pd.Series(tiempos_unicos).sort_values()
 
         # Extraer metadatos
-        self.f_min_total = self.df_raw[2].min() / 1e6
-        self.f_max_total = self.df_raw[3].max() / 1e6
-        self.f_step = self.df_raw.iloc[0, 4] / 1e6
         self.freqs = np.linspace(self.f_min_total, self.f_max_total, self.data_all.shape[1])
         print(f"Matriz: {self.data_all.shape} | Hops: {num_hops}| fmin: {self.f_min_total} fmax: {self.f_max_total}")
-
+        print(f"📡 Rango: {self.f_min_total:.2f} - {self.f_max_total:.2f} MHz")
 
     def _generar_nombre_default(self):
             """Genera un nombre de archivo basado en fechas, frecuencias y procesos."""
