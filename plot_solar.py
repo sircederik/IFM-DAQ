@@ -64,27 +64,30 @@ class SolarAnalyzer:
     def alinear_espectro(self):
         """Une los saltos de frecuencia  mediante vectorización."""
         print("🚀 Alineando saltos de frecuencia...")
-        num_hops = self.df_raw[2].nunique()
-        tiempos_unicos = self.df_raw['datetime'].unique()
 
         self.f_min_total = self.df_raw[2].min() / 1e6
         self.f_max_total = self.df_raw[3].max() / 1e6
         self.f_step = self.df_raw.iloc[0, 4] / 1e6
+        num_hops = self.df_raw[2].nunique() # Debería ser 3 según tu archivo
 
-        # Ordenar para asegurar que el reshape sea coherente
+        self.df_raw['datetime'] = pd.to_datetime(self.df_raw[0] + ' ' + self.df_raw[1])
+        cols_datos = list(range(6, self.df_raw.shape[1] - 1)) # -1 por la nueva col datetime
+        self.df_raw = self.df_raw[['datetime', 2] + cols_datos]
         self.df_raw.sort_values(by=['datetime', 2], inplace=True)
-        data_matrix = data_matrix = self.df_raw.iloc[:, 6:-1].values.astype(np.float32) 
+        data_matrix = self.df_raw.iloc[:, 2:].values.astype(np.float32)
+        tiempos_unicos = self.df_raw['datetime'].unique()
         del self.df_raw
         gc.collect()
 
         bins_per_hop = data_matrix.shape[1]
         self.data_all = data_matrix.reshape(len(tiempos_unicos), num_hops * bins_per_hop)
-        self.tiempos = pd.Series(tiempos_unicos).sort_values()
+        num_canales_total = self.data_all.shape[1] 
+        
+        self.freqs = np.linspace(self.f_min_total, self.f_max_total, num_canales_total)
+        print(f"✅ Vector de frecuencias reconstruido: {len(self.freqs)} puntos.")
 
-        # Extraer metadatos
-        self.freqs = np.linspace(self.f_min_total, self.f_max_total, self.data_all.shape[1])
-        print(f"Matriz: {self.data_all.shape} | Hops: {num_hops}| fmin: {self.f_min_total} fmax: {self.f_max_total}")
-        print(f"📡 Rango: {self.f_min_total:.2f} - {self.f_max_total:.2f} MHz")
+        self.tiempos = pd.Series(tiempos_unicos).sort_values()
+        print(f"✅ Vector de tiempos ordenado.")
 
     def _generar_nombre_default(self):
             """Genera un nombre de archivo basado en fechas, frecuencias y procesos."""
@@ -141,7 +144,7 @@ class SolarAnalyzer:
             Transforma los datos en 'Sigmas' sobre el nivel de quietud del receptor.
             """
 
-            print(f"⚖️Aplicando Normalización Estadística Autosuficiente (Z-Score)...")
+            print(f"⚖️ Aplicando Normalización Estadística Autosuficiente (Z-Score)...")
 
             # PASO 1: Usar la data actual completa como su propia referencia
             # Usamos la mediana en el eje del tiempo (axis=0) para cada frecuencia
@@ -158,7 +161,9 @@ class SolarAnalyzer:
             # PASO 3: Aplicar la transformación Z-Score
             # (Dato - Centro) / Dispersión
             # Esto centra el 'piso' en 0 y mide todo en unidades de desviación estándar (σ)
-            self.data_calibrada = (self.data_all - perfil_mediana) / perfil_std
+            self.data_all -= perfil_mediana
+            self.data_all /= perfil_std
+            self.data_calibrada = self.data_all
 
             self.stats['unidad'] = "Sigmas (σ)"
             print("✅ Normalización completada con éxito sobre los datos locales.")
@@ -323,34 +328,55 @@ class SolarAnalyzer:
         return self.potencia_final
 
     def limpiar_transitorios_de_archivo(self, ancho_segundos=3):
-        """
-        Identifica las uniones de archivos y elimina el 'latigazo' inicial.
-        Esto evita falsos positivos de 8 sigmas.
-        """
-        if self.indices_inicio_archivo is None:
+        if self.indices_inicio_archivo is None or len(self.indices_inicio_archivo) == 0:
             return
 
-        print("🧹 Limpiando transitorios de conmutación...")
-        # Por cada inicio de archivo, borramos los primeros 3 segundos
-        for inicio in self.indices_inicio_archivo:
-            if inicio == 0: continue # El primer archivo es el inicio real
+        print(f"🧹 Limpiando transitorios en {len(self.indices_inicio_archivo)} costuras...")
 
-            # Aplicamos un 'blanking' (ponemos el valor de la mediana)
-            # para que el Z-Score no detecte un pico falso.
-            self.data_all[inicio:inicio+ancho_segundos, :] = np.nanmedian(self.data_all, axis=0)
-            print(f'{inicio}') ##esta parte necesita trabajo, algún canál está saturado
-        print("✨ Datos saneados. Listos para normalización.")
+        # Calculamos una mediana global o por canal de una zona "limpia"
+        # Tomamos una muestra de la mitad de la matriz para evitar bordes
+        muestra_limpia = self.data_all[10:110, :]
+        perfil_relleno = np.nanmedian(muestra_limpia, axis=0)
+
+        for inicio in self.indices_inicio_archivo:
+            # El primer archivo (inicio 0) también puede tener ruido de encendido del SDR
+            # Yo recomiendo limpiar incluso el inicio 0.
+
+            fin = min(inicio + ancho_segundos, self.data_all.shape[0])
+
+            # REEMPLAZO: Usamos el perfil de la zona limpia
+            self.data_all[inicio:fin, :] = perfil_relleno
+
+            # Debug para ver qué estamos haciendo
+            print(f"   ↳ Costura en índice {inicio}: {ancho_segundos}s reemplazados.")
+
+        print("✨ Datos saneados. Los latigazos han sido neutralizados.")
 
     def generar_grafico(self):
         """Crea la visualización final ax1 (espectro) y ax2 (potencia)."""
-        # 1. Recorte de frecuencias solicitado
+        LIMITE_VERTICAL = 5000
+        # 1. Calculamos cuántas filas tiene nuestra matriz calibrada
+        num_filas_total = self.data_calibrada.shape[0]
+
+        # 2. Calculamos el factor de salto (step)
+        # Si num_filas_total < 5000, factor_t será 1 (no cambia nada)
+        # Si num_filas_total = 50,000, factor_t será 10 (grafica 1 de cada 10 filas)
+        factor_t = max(1, num_filas_total // LIMITE_VERTICAL)
+        
+        if factor_t > 1:
+            print(f"📉 Optimizando visualización: Factor de decimación {factor_t}x")
+            print(f"   (De {num_filas_total} filas a {num_filas_total // factor_t} para el PNG)")
+                # 1. Recorte de frecuencias solicitado
         fmin = self.args.fmin if self.args.fmin else self.f_min_total
         fmax = self.args.fmax if self.args.fmax else self.f_max_total
         idx_s = int((fmin - self.f_min_total) / self.f_step)
         idx_e = int((fmax - self.f_min_total) / self.f_step)
-        data_plot = self.data_calibrada[:, idx_s:idx_e]
+        # 3. Slicing inteligente: Tomamos la vista (no copia) de la matriz
+        # [::factor_t, :] salta filas en el tiempo pero mantiene todas las frecuencias
+        data_plot = self.data_calibrada[::factor_t, idx_s:idx_e]
+        tiempos_plot = self.tiempos.iloc[::factor_t]
 
-        
+        print(f"DEBUG: Matriz {data_plot.shape}, Tiempos {tiempos_plot.shape}")
         if hasattr(self.args, 'norm') and self.args.norm:
             unidad = "Sigmas (σ)"
             # CÁLCULO DINÁMICO DE ESCALA
@@ -374,13 +400,16 @@ class SolarAnalyzer:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 12), gridspec_kw={'height_ratios': [3, 1]})
 
         # Espectrograma
+        t_min = mdates.date2num(tiempos_plot.iloc[0])
+        t_max = mdates.date2num(tiempos_plot.iloc[-1])
 
         extent = [mdates.date2num(self.tiempos.iloc[0]), mdates.date2num(self.tiempos.iloc[-1]), fmin, fmax]
         im = ax1.imshow(data_plot.T, aspect='auto', extent=extent, 
                         cmap=self.cmap_final, 
                         vmin=v_min_auto, 
                         vmax=v_max_auto,
-                        origin='lower')
+                        interpolation='nearest',
+                        origin='upper')
 
         fig.colorbar(im, ax=ax1, label=f'Intensidad {unidad}')
 
@@ -412,7 +441,7 @@ class SolarAnalyzer:
         ymin = min(-s1, self.potencia_final.min() * 1.2)
         ax2.set_ylim(ymin, ymax)
         ax2.set_xlabel(f"Tiempo [UTC]")
-        ax2.plot(self.tiempos, potencia, color='orange', linewidth=1)
+        ax2.plot(tiempos_plot, potencia, color='orange', linewidth=1)
 
         # Formato de tiempo
         locator = mdates.AutoDateLocator()
@@ -431,6 +460,8 @@ class SolarAnalyzer:
             output_name = self._generar_nombre_default()
 
         plt.savefig(output_name, dpi=300, bbox_inches='tight')
+        plt.close('all')
+        gc.collect()
         print(f"✅ Gráfico guardado como: {output_name}")
         return output_name
 
@@ -471,12 +502,12 @@ if __name__ == "__main__":
     solar = SolarAnalyzer(args)
     solar.cargar_y_limpiar()
     solar.alinear_espectro()
+    solar.limpiar_transitorios_de_archivo(ancho_segundos=2)
     solar.calibrar_ruido()
     if args.norm:
-        solar.limpiar_transitorios_de_archivo(ancho_segundos=5)
         solar.normalizar_datos()
 
     solar.configurar_visualizacion()
     archivo_final = solar.generar_grafico()
+    solar.detectar_eventos_transitorios(umbral=5)
     solar.imprimir_sumario(archivo_final)
-    solar.detectar_eventos_transitorios(umbral=6)
