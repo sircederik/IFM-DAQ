@@ -381,9 +381,9 @@ class SolarAnalyzer:
             unidad = "Sigmas (σ)"
             # CÁLCULO DINÁMICO DE ESCALA
             # El vmin se ajusta al "piso" de los datos actuales
-            v_min_auto = -0.5 #np.nanpercentile(data_plot, 2)   # El 5% más bajo
+            v_min_auto = -0.1 
             # El vmax se ajusta a las ráfagas, dejando un margen
-            v_max_auto = 3.5 #np.nanmax(self.data_calibrada) 
+            v_max_auto = 4.0 
             rango = v_max_auto - v_min_auto
             print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} Sigmas (σ)")
         else:
@@ -397,19 +397,21 @@ class SolarAnalyzer:
         print(f"Máximo detectado: {np.nanmax(self.data_calibrada):.2f} sigmas")
         print(f"Promedio de la data: {np.nanmean(self.data_calibrada):.2f} sigmas")
         # 2. Setup de figura
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 12), gridspec_kw={'height_ratios': [3, 1]})
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
 
         # Espectrograma
         t_min = mdates.date2num(tiempos_plot.iloc[0])
         t_max = mdates.date2num(tiempos_plot.iloc[-1])
 
         extent = [mdates.date2num(self.tiempos.iloc[0]), mdates.date2num(self.tiempos.iloc[-1]), fmin, fmax]
-        im = ax1.imshow(data_plot.T, aspect='auto', extent=extent, 
+        im = ax1.imshow(data_plot.T, 
+                        aspect='auto', 
+                        extent=extent, 
                         cmap=self.cmap_final, 
                         vmin=v_min_auto, 
                         vmax=v_max_auto,
                         interpolation='nearest',
-                        origin='upper')
+                        origin='lower')
 
         fig.colorbar(im, ax=ax1, label=f'Intensidad {unidad}')
 
@@ -427,6 +429,7 @@ class SolarAnalyzer:
 
 
         ax1.set_xlabel(f"Tiempo [UTC]")
+        ax1.xaxis_date()
         # Dibujar las bandas de confianza
         ax2.axhspan(-s1, s1, color='gray', alpha=0.15, label=f'1{unidad_txt} (Ruido)')
         ax2.axhspan(s1, s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
@@ -437,11 +440,13 @@ class SolarAnalyzer:
         # Opcional: Línea en el cero para referencia técnica
         ax2.axhline(0, color='white', linewidth=0.8, linestyle='--', alpha=0.5)
         # Ajustar límites del eje Y dinámicamente
-        ymax = max(s3, self.potencia_final.max() * 1.2)
-        ymin = min(-s1, self.potencia_final.min() * 1.2)
+        ymax =5.0 #max(s3, self.potencia_final.max() * 1.2)
+        ymin =-5.0 #min(-s1, self.potencia_final.min() * 1.2)
         ax2.set_ylim(ymin, ymax)
+        ax2.margins(x=0)
+        ax2.xaxis_date()
         ax2.set_xlabel(f"Tiempo [UTC]")
-        ax2.plot(tiempos_plot, potencia, color='orange', linewidth=1)
+        ax2.plot(tiempos_plot, potencia, color='red', linewidth=1.5)
 
         # Formato de tiempo
         locator = mdates.AutoDateLocator()
