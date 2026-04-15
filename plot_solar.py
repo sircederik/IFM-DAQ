@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.colors import ListedColormap
 from matplotlib.colors import hsv_to_rgb
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 import argparse
 import sys
 import os
@@ -43,7 +44,6 @@ class SolarAnalyzer:
                 temp_df = pd.read_csv(f, header=None, low_memory=False)
                 # Crear datetime primero para evitar fragmentación
                 temp_df['datetime'] = pd.to_datetime(temp_df[0] + ' ' + temp_df[1])
-                #temp_df['datetime'] = (temp_df['datetime'].dt.tz_localize('America/Mexico_City', ambiguous='infer').dt.tz_convert('UTC'))
                 # Convertir bloque de datos a numérico de golpe (columnas 6 en adelante)
                 temp_df.iloc[:, 6:-1] = temp_df.iloc[:, 6:-1].apply(pd.to_numeric, errors='coerce')
                 lista_df.append(temp_df)
@@ -320,11 +320,11 @@ class SolarAnalyzer:
 
         if hasattr(self.args, 'norm') and self.args.norm:
             self.potencia_final = centrada / sigma_final
-            unidad_label = "Sigmas (σ)"
+            unidad = "Sigmas (σ)"
         else:
             self.potencia_final = centrada
-            unidad_label = "dB"
-        self.stats.update({'std': sigma_final, 'base_db': mediana, 'unidad': unidad_label})
+            unidad = "dB"
+        self.stats.update({'std': sigma_final, 'base_db': mediana, 'unidad': unidad})
         return self.potencia_final
 
     def limpiar_transitorios_de_archivo(self, ancho_segundos=3):
@@ -385,20 +385,19 @@ class SolarAnalyzer:
             # El vmax se ajusta a las ráfagas, dejando un margen
             v_max_auto = 4.0 
             rango = v_max_auto - v_min_auto
-            print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} Sigmas (σ)")
         else:
             v_min_auto, v_max_auto = self.obtener_limites_raw(data_plot)
-            unidad = "Potencia Relativa (Unidades Raw) dB"
+            unidad = "dB"
 
-            print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} dB")
+        print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} {unidad}")
 
         potencia = self.procesar_potencia(data_plot)
 
-        print(f"Máximo detectado: {np.nanmax(self.data_calibrada):.2f} sigmas")
-        print(f"Promedio de la data: {np.nanmean(self.data_calibrada):.2f} sigmas")
-        # 2. Setup de figura
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
+        print(f"Máximo detectado: {np.nanmax(self.data_calibrada):.2f} {unidad}")
+        print(f"Promedio de los datos: {np.nanmean(self.data_calibrada):.2f} {unidad}")
 
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
+        plt.subplots_adjust(hspace=0.02)
         # Espectrograma
         t_min = mdates.date2num(tiempos_plot.iloc[0])
         t_max = mdates.date2num(tiempos_plot.iloc[-1])
@@ -413,7 +412,9 @@ class SolarAnalyzer:
                         interpolation='nearest',
                         origin='lower')
 
-        fig.colorbar(im, ax=ax1, label=f'Intensidad {unidad}')
+        divider = make_axes_locatable(ax1)
+        cax = divider.append_axes("right", size="2%", pad=0.1)
+        plt.colorbar(im, cax=cax, label=f'Intensidad {unidad}')
 
 
         # Definimos los niveles según si está normalizado o no
@@ -428,8 +429,10 @@ class SolarAnalyzer:
             unidad_txt = "dB"
 
 
-        ax1.set_xlabel(f"Tiempo [UTC]")
-        ax1.xaxis_date()
+        #ax1.set_xlabel(f"Tiempo [LC]")
+        ax1.set_title(f"Análisis Radioastronómico Solar: {fmin}-{np.round(fmax)} MHz")
+        ax1.set_ylabel(f"Frecuencia [MHz]")
+        ax1.tick_params(labelbottom=False) # Quitar etiquetas de ax1 para que no se encimen
         # Dibujar las bandas de confianza
         ax2.axhspan(-s1, s1, color='gray', alpha=0.15, label=f'1{unidad_txt} (Ruido)')
         ax2.axhspan(s1, s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
@@ -440,25 +443,25 @@ class SolarAnalyzer:
         # Opcional: Línea en el cero para referencia técnica
         ax2.axhline(0, color='white', linewidth=0.8, linestyle='--', alpha=0.5)
         # Ajustar límites del eje Y dinámicamente
-        ymax =5.0 #max(s3, self.potencia_final.max() * 1.2)
-        ymin =-5.0 #min(-s1, self.potencia_final.min() * 1.2)
+        ymax =max(s3, self.potencia_final.max() * 1.5)
+        ymin =min(-s1, self.potencia_final.min() * 1.5)
         ax2.set_ylim(ymin, ymax)
         ax2.margins(x=0)
         ax2.xaxis_date()
-        ax2.set_xlabel(f"Tiempo [UTC]")
-        ax2.plot(tiempos_plot, potencia, color='red', linewidth=1.5)
+        ax2.set_xlabel(f"Tiempo [LT]")
 
-        # Formato de tiempo
+        fig.canvas.draw()
+        pos1 = ax1.get_position()
+        pos2 = ax2.get_position()
+        ax2.set_position([pos1.x0, pos2.y0, pos1.width, pos2.height])
+
         locator = mdates.AutoDateLocator()
-        formatter = mdates.ConciseDateFormatter(locator)
-        for ax in [ax1, ax2]:
-            ax.xaxis.set_major_locator(locator)
-            ax.xaxis.set_major_formatter(formatter)
-            ax.grid(True, alpha=0.2)
-
-        ax1.set_title(f"Análisis Radioastronómico Solar: {fmin}-{fmax} MHz")
+        ax2.xaxis.set_major_locator(locator)
         ax2.set_ylabel(f"Flujo Relativo {unidad}")
-
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d'))
+        plt.setp(ax2.get_xticklabels(), rotation=45, ha='right')
+        ax2.plot(tiempos_plot, potencia, color='red', linewidth=1.3)
+        #plt.tight_layout()
         if self.args.output:
             output_name = self.args.output
         else:
