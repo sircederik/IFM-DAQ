@@ -43,9 +43,9 @@ class DAQManager:
         if self.ser.in_waiting > 0:
             try:
                 linea = self.ser.readline().decode('utf-8').strip()
-                valores = [float(x) for x in linea.split(',')]
+                valores = [round(float(x),2) for x in linea.split(',')]
                 if len(valores) == 4:
-                    return [v + CONFIG['OFFSETS'][i] for i, v in enumerate(valores)]
+                    return [round(v + CONFIG['OFFSETS'][i],2) for i, v in enumerate(valores)]
             except (ValueError, UnicodeDecodeError):
                 return None
         return None
