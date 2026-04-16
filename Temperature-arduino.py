@@ -17,7 +17,7 @@ CONFIG = {
     'BAUD': 9600,
     'FILE': "log_temperaturas.csv",
     'MAX_SAMPLES': 20,
-    'OFFSETS': [0.0, 0.0, 0.0, 0.0],
+    'OFFSETS': [-0.19, -0.06, 0.12, -0.19],
     # Nombres personalizados para tus sensores
     'LABELS': ["T. Disipador ", "T. Placa interior", "T. Peltier superior", "T. Ambiente"],
     # Estilos visuales: (Color, Estilo de línea)
