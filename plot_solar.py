@@ -15,7 +15,7 @@ import os
 
 
 class SolarAnalyzer:
-    CMAPS_COMUNES = ['charolastra', 'magma', 'inferno', 'viridis', 'plasma', 'jet', 'hot', 'gnuplot2']
+    CMAPS_COMUNES = ['charolastra', 'magma', 'inferno', 'viridis', 'plasma', 'jet', 'hot', 'gnuplot2','rainbow']
 
     def __init__(self, args):
         self.args = args
@@ -299,7 +299,7 @@ class SolarAnalyzer:
             for i in range(len(idx_t)):
                 t_idx, f_idx = idx_t[i], idx_f[i]
                 evento = {
-                    'tiempo': self.tiempos[t_idx],
+                    'tiempo': self.tiempos.iloc[t_idx],
                     'frecuencia': self.freqs[f_idx],
                     'intensidad': self.data_calibrada[t_idx, f_idx]
                 }
@@ -362,15 +362,14 @@ class SolarAnalyzer:
         # Si num_filas_total < 5000, factor_t será 1 (no cambia nada)
         # Si num_filas_total = 50,000, factor_t será 10 (grafica 1 de cada 10 filas)
         factor_t = max(1, num_filas_total // LIMITE_VERTICAL)
-        
-        if factor_t > 1:
-            print(f"📉 Optimizando visualización: Factor de decimación {factor_t}x")
-            print(f"   (De {num_filas_total} filas a {num_filas_total // factor_t} para el PNG)")
-                # 1. Recorte de frecuencias solicitado
+
+        # 1. Recorte de frecuencias solicitado
         fmin = self.args.fmin if self.args.fmin else self.f_min_total
         fmax = self.args.fmax if self.args.fmax else self.f_max_total
-        idx_s = int((fmin - self.f_min_total) / self.f_step)
-        idx_e = int((fmax - self.f_min_total) / self.f_step)
+       
+        idx_s = np.abs(self.freqs - fmin).argmin()
+        idx_e = np.abs(self.freqs - fmax).argmin()
+
         # 3. Slicing inteligente: Tomamos la vista (no copia) de la matriz
         # [::factor_t, :] salta filas en el tiempo pero mantiene todas las frecuencias
         data_plot = self.data_calibrada[::factor_t, idx_s:idx_e]
@@ -381,13 +380,16 @@ class SolarAnalyzer:
             unidad = "Sigmas (σ)"
             # CÁLCULO DINÁMICO DE ESCALA
             # El vmin se ajusta al "piso" de los datos actuales
-            v_min_auto = -0.1 
+            v_min_auto = 0.0 
             # El vmax se ajusta a las ráfagas, dejando un margen
-            v_max_auto = 4.0 
+            v_max_auto = 3.0 
             rango = v_max_auto - v_min_auto
         else:
             v_min_auto, v_max_auto = self.obtener_limites_raw(data_plot)
             unidad = "dB"
+
+        if factor_t > 1:
+            print(f"📉 Optimizando visualización: Factor de decimación {factor_t}x")
 
         print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} {unidad}")
 
@@ -486,6 +488,55 @@ class SolarAnalyzer:
         print(f"✅ Resultado: {output_file}")
         print("="*45)
 
+
+    def aplicar_filtro_temporal(self, start_raw, end_raw):
+        if not start_raw and not end_raw:
+            return
+
+        # 1. Convertir self.tiempos (que ya debe estar decimado si hubo downsampling)
+        # Usamos pd.to_datetime para asegurar compatibilidad
+        tiempos_dt = pd.to_datetime(self.tiempos)
+        fecha_base = tiempos_dt.iloc[0].date()
+
+        def parsear(input_str, default_val):
+            if not input_str: return default_val
+            try:
+                return pd.to_datetime(input_str)
+            except:
+                h, m = map(int, input_str.split(':'))
+                return datetime.combine(fecha_base, time(h, m))
+
+        t_inicio = parsear(start_raw, tiempos_dt.iloc[0])
+        t_fin = parsear(end_raw, tiempos_dt.iloc[-1])
+
+        # 2. Crear la máscara basándonos ÚNICAMENTE en el tamaño actual de tiempos_dt
+        mask = (tiempos_dt >= t_inicio) & (tiempos_dt <= t_fin)
+
+        # 3. Validar que no quede vacío
+        if not any(mask):
+            print(f"[!] Ojo: El rango {start_raw}-{end_raw} no existe en los datos procesados.")
+            return
+
+        # 4. RECORTAR TODO LO QUE TENGA ESE EJE TEMPORAL (Axis 0)
+        self.tiempos = self.tiempos[mask]
+        
+        if hasattr(self, 'data_norm'):
+            self.data_norm = self.data_norm[mask]
+        
+        if hasattr(self, 'data_all'):
+            self.data_all = self.data_all[mask]
+
+        if self.data_calibrada is not None:
+            # NumPy aplica la máscara booleana directamente sobre el eje 0 (filas)
+            self.data_calibrada = self.data_calibrada[mask]
+
+        # Si tienes un vector de potencia calculada, también hay que mocharlo:
+        if hasattr(self, 'potencia_media'):
+            self.potencia_media = self.potencia_media[mask]
+
+        print(f"[*] Zoom final aplicado: {len(self.tiempos)} muestras en ventana.")
+
+
 # --- INICIO DEL PROGRAMA ---
 if __name__ == "__main__":
 
@@ -504,6 +555,10 @@ if __name__ == "__main__":
     parser.add_argument('--cal', nargs='*', help='Calibración: nada (3-4am), un archivo.csv, o rango "HH:MM HH:MM". Si no se pone --cal, no calibra.')
     parser.add_argument('--cmap', type=str, default='charolastra', help=cmap_help)
     parser.add_argument('--norm', action='store_true', help='Usar normalización estadística (Z-Score)')
+
+    parser.add_argument('--start', type=str, help='Inicio: "YYYY-MM-DD HH:MM" o solo "HH:MM"')
+    parser.add_argument('--end', type=str, help='Fin: "YYYY-MM-DD HH:MM" o solo "HH:MM"')
+
     args = parser.parse_args()
 
     # Flujo de ejecución limpio
@@ -515,6 +570,7 @@ if __name__ == "__main__":
     if args.norm:
         solar.normalizar_datos()
 
+    #solar.aplicar_filtro_temporal(args.start, args.end)
     solar.configurar_visualizacion()
     archivo_final = solar.generar_grafico()
     solar.detectar_eventos_transitorios(umbral=5)
