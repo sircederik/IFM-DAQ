@@ -138,35 +138,34 @@ class SolarAnalyzer:
                     print(f"⚠️ Colormap '{self.args.cmap}' no encontrado. Usando 'magma'.")
                     self.cmap_final = plt.get_cmap('magma')
 
-    def normalizar_datos(self):
-            """
-            Normaliza la señal (Z-Score) usando la estadística de la observación actual.
-            Transforma los datos en 'Sigmas' sobre el nivel de quietud del receptor.
-            """
 
-            print(f"⚖️ Aplicando Normalización Estadística Autosuficiente (Z-Score)...")
+    def calcular_estadisticos_globales(self):
+        print("🌍 Calculando estadísticos globales (referencia fija)...")
 
-            # PASO 1: Usar la data actual completa como su propia referencia
-            # Usamos la mediana en el eje del tiempo (axis=0) para cada frecuencia
-            # La mediana es inmune a ráfagas solares o interferencias breves.
-            perfil_mediana = np.nanmedian(self.data_all, axis=0)
+        self.perfil_mediana_global = np.nanmedian(self.data_all, axis=0)
 
-            # PASO 2: Calcular la desviación estándar (ruido base)
-            # Esto nos dice qué tan 'ruidoso' es cada canal de frecuencia.
-            perfil_std = np.nanstd(self.data_all, axis=0)
+        # MAD por canal
+        desviaciones = np.abs(self.data_all - self.perfil_mediana_global)
+        mad = np.nanmedian(desviaciones, axis=0)
 
-            # Seguridad: Evitar división por cero o por canales muertos
-            perfil_std[perfil_std <= 0] = 1.0  
+        # Convertir MAD → sigma robusto
+        self.perfil_std_global = 1.4826 * mad
 
-            # PASO 3: Aplicar la transformación Z-Score
-            # (Dato - Centro) / Dispersión
-            # Esto centra el 'piso' en 0 y mide todo en unidades de desviación estándar (σ)
-            self.data_all -= perfil_mediana
-            self.data_all /= perfil_std
-            self.data_calibrada = self.data_all
+        # Seguridad
+        self.perfil_std_global[self.perfil_std_global <= 0] = 1.0
+        print("✅ Estadísticos globales listos.")
 
-            self.stats['unidad'] = "Sigmas (σ)"
-            print("✅ Normalización completada con éxito sobre los datos locales.")
+
+    def aplicar_normalizacion_global(self):
+        print("⚖ Aplicando normalización global (Z-score fijo)...")
+
+        self.data_calibrada = self.data_all.copy()
+        self.data_calibrada -= self.perfil_mediana_global
+        self.data_calibrada /= self.perfil_std_global
+
+        self.stats['unidad'] = "Sigmas (σ)"
+
+
 
     def obtener_limites_raw(self, data):
         """
@@ -313,18 +312,17 @@ class SolarAnalyzer:
     def procesar_potencia(self, data_recortada):
         """Calcula la curva de flujo relativo y estadísticas de ráfagas."""
         potencia_media = np.nanmean(data_recortada, axis=1)
+
         self.potencia_final = pd.Series(potencia_media).rolling(window=8, center=True).mean()
-        mediana=self.potencia_final.median()
-        centrada=self.potencia_final-mediana 
-        sigma_final=centrada.std()
 
         if hasattr(self.args, 'norm') and self.args.norm:
-            self.potencia_final = centrada / sigma_final
             unidad = "Sigmas (σ)"
         else:
-            self.potencia_final = centrada
+            mediana = self.potencia_final.median()
+            self.potencia_final = self.potencia_final - perfil_mediana
             unidad = "dB"
-        self.stats.update({'std': sigma_final, 'base_db': mediana, 'unidad': unidad})
+        self.stats.update({ 'unidad': unidad})
+        self.stats['base_db'] = np.nanmedian(self.data_all)
         return self.potencia_final
 
     def limpiar_transitorios_de_archivo(self, ancho_segundos=3):
@@ -520,19 +518,12 @@ class SolarAnalyzer:
         # 4. RECORTAR TODO LO QUE TENGA ESE EJE TEMPORAL (Axis 0)
         self.tiempos = self.tiempos[mask]
         
-        if hasattr(self, 'data_norm'):
-            self.data_norm = self.data_norm[mask]
-        
         if hasattr(self, 'data_all'):
             self.data_all = self.data_all[mask]
 
         if self.data_calibrada is not None:
             # NumPy aplica la máscara booleana directamente sobre el eje 0 (filas)
             self.data_calibrada = self.data_calibrada[mask]
-
-        # Si tienes un vector de potencia calculada, también hay que mocharlo:
-        if hasattr(self, 'potencia_media'):
-            self.potencia_media = self.potencia_media[mask]
 
         print(f"[*] Zoom final aplicado: {len(self.tiempos)} muestras en ventana.")
 
@@ -567,10 +558,15 @@ if __name__ == "__main__":
     solar.alinear_espectro()
     solar.limpiar_transitorios_de_archivo(ancho_segundos=2)
     solar.calibrar_ruido()
-    if args.norm:
-        solar.normalizar_datos()
 
-    #solar.aplicar_filtro_temporal(args.start, args.end)
+    if args.norm:
+        solar.calcular_estadisticos_globales()
+
+    solar.aplicar_filtro_temporal(args.start, args.end)
+
+    if args.norm:
+        solar.aplicar_normalizacion_global()
+
     solar.configurar_visualizacion()
     archivo_final = solar.generar_grafico()
     solar.detectar_eventos_transitorios(umbral=5)
