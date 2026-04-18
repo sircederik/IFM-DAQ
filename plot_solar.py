@@ -200,6 +200,46 @@ class SolarAnalyzer:
         data_visual = self.data_all - background
         return data_visual
 
+
+    def eliminar_rfi_vertical(self, umbral_sigma=5.0):
+        print("🧹 Eliminando RFI vertical (interferencia por frecuencia)...")
+
+        data = self.data_all
+
+        # 1. Estadística por canal (frecuencia)
+        mediana_f = np.nanmedian(data, axis=0)
+        mad_f = np.nanmedian(np.abs(data - mediana_f), axis=0)
+        sigma_f = 1.4826 * mad_f
+
+        # 2. Detectar canales problemáticos
+        med_global = np.nanmedian(mediana_f)
+        sigma_global = 1.4826 * np.nanmedian(np.abs(mediana_f - med_global))
+
+        mask_rfi = np.abs(mediana_f - med_global) > umbral_sigma * sigma_global
+
+        num_rfi = np.sum(mask_rfi)
+        print(f"🚨 Canales RFI detectados: {num_rfi}")
+
+        if num_rfi == 0:
+            print("✅ No se detectó RFI significativo.")
+            return
+
+        # 3. Interpolación simple por vecinos
+        data_filtrado = data.copy()
+
+        for i in np.where(mask_rfi)[0]:
+            izq = max(i - 1, 0)
+            der = min(i + 1, data.shape[1] - 1)
+
+            # Promedio de vecinos
+            data_filtrado[:, i] = 0.5 * (data[:, izq] + data[:, der])
+
+        self.data_all = data_filtrado
+
+        print("✨ RFI vertical mitigado.")
+        print("Checksum data_all:", np.nanmean(self.data_all))
+
+
     def calibrar_ruido(self):
         """
         Lógica de calibración:
@@ -309,21 +349,21 @@ class SolarAnalyzer:
                           f"{evento['frecuencia']:.2f} MHz -> {evento['intensidad']:.2f}σ")
         return eventos
 
-    def procesar_potencia(self, data_recortada):
-        """Calcula la curva de flujo relativo y estadísticas de ráfagas."""
-        potencia_media = np.nanmean(data_recortada, axis=1)
 
-        self.potencia_final = pd.Series(potencia_media).rolling(window=8, center=True).mean()
+    def procesar_potencia(self, data):
+        """Calcula la potencia de forma consistente (sin efectos de contexto)."""
 
-        if hasattr(self.args, 'norm') and self.args.norm:
-            unidad = "Sigmas (σ)"
-        else:
-            mediana = self.potencia_final.median()
-            self.potencia_final = self.potencia_final - perfil_mediana
-            unidad = "dB"
-        self.stats.update({ 'unidad': unidad})
-        self.stats['base_db'] = np.nanmedian(self.data_all)
-        return self.potencia_final
+        potencia_media = np.nanmean(data, axis=1)
+
+        # Suavizado
+        potencia = pd.Series(potencia_media).rolling(
+            window=8,
+            center=True,
+            min_periods=1   # 🔥 importante para evitar bordes inconsistentes
+        ).mean()
+
+        return potencia
+
 
     def limpiar_transitorios_de_archivo(self, ancho_segundos=3):
         if self.indices_inicio_archivo is None or len(self.indices_inicio_archivo) == 0:
@@ -391,7 +431,13 @@ class SolarAnalyzer:
 
         print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} {unidad}")
 
-        potencia = self.procesar_potencia(data_plot)
+        potencia_plot = self.potencia_full.iloc[::factor_t]
+        tiempos_plot = self.tiempos.iloc[::factor_t]
+
+        # 🔥 FORZAR misma longitud
+        n = min(len(tiempos_plot), len(potencia_plot))
+        tiempos_plot = tiempos_plot.iloc[:n]
+        potencia_plot = potencia_plot.iloc[:n]
 
         print(f"Máximo detectado: {np.nanmax(self.data_calibrada):.2f} {unidad}")
         print(f"Promedio de los datos: {np.nanmean(self.data_calibrada):.2f} {unidad}")
@@ -443,8 +489,8 @@ class SolarAnalyzer:
         # Opcional: Línea en el cero para referencia técnica
         ax2.axhline(0, color='white', linewidth=0.8, linestyle='--', alpha=0.5)
         # Ajustar límites del eje Y dinámicamente
-        ymax =max(s3, self.potencia_final.max() * 1.5)
-        ymin =min(-s1, self.potencia_final.min() * 1.5)
+        ymax =max(s3, potencia_plot.max() * 1.5)
+        ymin =min(-s1, potencia_plot.min() * 1.5)
         ax2.set_ylim(ymin, ymax)
         ax2.margins(x=0)
         ax2.xaxis_date()
@@ -460,7 +506,7 @@ class SolarAnalyzer:
         ax2.set_ylabel(f"Flujo Relativo {unidad}")
         ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d'))
         plt.setp(ax2.get_xticklabels(), rotation=45, ha='right')
-        ax2.plot(tiempos_plot, potencia, color='red', linewidth=1.3)
+        ax2.plot(tiempos_plot, potencia_plot, color='red', linewidth=1.3)
         #plt.tight_layout()
         if self.args.output:
             output_name = self.args.output
@@ -482,7 +528,6 @@ class SolarAnalyzer:
         print(f"📅 Periodo:   {self.tiempos.min()} -> {self.tiempos.max()}")
         print(f"📡 Espectro:  {self.f_min_total:.2f} a {self.f_max_total:.2f} MHz")
         print(f"📏 Res. Bin:  {self.f_step*1000:.2f} kHz")
-        print(f"⚙️  Nivel Base: {self.stats['base_db']:.2f} dB")
         print(f"✅ Resultado: {output_file}")
         print("="*45)
 
@@ -557,15 +602,20 @@ if __name__ == "__main__":
     solar.cargar_y_limpiar()
     solar.alinear_espectro()
     solar.limpiar_transitorios_de_archivo(ancho_segundos=2)
+    solar.eliminar_rfi_vertical()
     solar.calibrar_ruido()
 
     if args.norm:
         solar.calcular_estadisticos_globales()
+        solar.aplicar_normalizacion_global()
+
+    solar.potencia_full = solar.procesar_potencia(solar.data_calibrada)
+    solar.potencia_full.index = solar.tiempos
+
+    if not args.norm:
+        solar.potencia_full -= solar.potencia_full.median()
 
     solar.aplicar_filtro_temporal(args.start, args.end)
-
-    if args.norm:
-        solar.aplicar_normalizacion_global()
 
     solar.configurar_visualizacion()
     archivo_final = solar.generar_grafico()
