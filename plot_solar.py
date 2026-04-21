@@ -9,6 +9,7 @@ import matplotlib.dates as mdates
 from matplotlib.colors import ListedColormap
 from matplotlib.colors import hsv_to_rgb
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.colors import LogNorm, Normalize
 import argparse
 import sys
 import os
@@ -359,7 +360,7 @@ class SolarAnalyzer:
         potencia = pd.Series(potencia_media).rolling(
             window=8,
             center=True,
-            min_periods=1   # 🔥 importante para evitar bordes inconsistentes
+            min_periods=1   
         ).mean()
 
         return potencia
@@ -489,9 +490,9 @@ class SolarAnalyzer:
         # Opcional: Línea en el cero para referencia técnica
         ax2.axhline(0, color='white', linewidth=0.8, linestyle='--', alpha=0.5)
         # Ajustar límites del eje Y dinámicamente
-        ymax =max(s3, potencia_plot.max() * 1.5)
-        ymin =min(-s1, potencia_plot.min() * 1.5)
-        ax2.set_ylim(ymin, ymax)
+        #ymax =max(s3, potencia_plot.max() * 1.5)
+        #ymin =min(-s1, potencia_plot.min() * 1.5)
+        #ax2.set_ylim(ymin, ymax)
         ax2.margins(x=0)
         ax2.xaxis_date()
         ax2.set_xlabel(f"Tiempo [LT]")
