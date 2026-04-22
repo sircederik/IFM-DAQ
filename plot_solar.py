@@ -319,14 +319,15 @@ class SolarAnalyzer:
             return matrix_n
 
         except Exception as e:
-            print(f"❌ Error al procesar archivo de calibración: {e}")
+            print(f"❌ --> Error al procesar archivo de calibración: {e}")
             return None
 
     def detectar_eventos_transitorios(self, umbral=6.0):
         """
         Localiza píxeles que exceden el umbral de sigmas y devuelve sus coordenadas reales.
         """
-        idx_t, idx_f = np.where(self.data_calibrada > umbral)
+        print(f'-> Detentando eventos transitorios...')
+        idx_t, idx_f = np.where(self.data_all > umbral)
         
         eventos = []
         if len(idx_t) > 0:
@@ -385,6 +386,7 @@ class SolarAnalyzer:
         print("✨ Datos saneados. Los latigazos han sido neutralizados.")
 
     def generar_grafico(self):
+        print(f'-> Generando gráfico...')
         """Crea la visualización final ax1 (espectro) y ax2 (potencia)."""
         LIMITE_VERTICAL = 5000
         # 1. Calculamos cuántas filas tiene nuestra matriz calibrada
@@ -611,5 +613,5 @@ if __name__ == "__main__":
 
     #solar.configurar_visualizacion()
     archivo_final = solar.generar_grafico()
-    #solar.detectar_eventos_transitorios(umbral=5)
+    solar.detectar_eventos_transitorios(umbral=5)
     #solar.imprimir_sumario(archivo_final)
