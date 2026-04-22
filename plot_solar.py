@@ -27,7 +27,7 @@ class SolarAnalyzer:
         self.f_min_total = None
         self.f_max_total = None
         self.f_step = None
-        self.potencia_final = None
+        self.potencia = None
         self.stats = {}
         self.cmap_final = None
         self.freqs = None
@@ -160,9 +160,11 @@ class SolarAnalyzer:
     def aplicar_normalizacion_global(self):
         print("⚖ Aplicando normalización global (Z-score fijo)...")
 
-        self.data_calibrada = self.data_all.copy()
-        self.data_calibrada -= self.perfil_mediana_global
-        self.data_calibrada /= self.perfil_std_global
+        #self.data_calibrada = self.data_all.copy()
+        #self.data_calibrada -= self.perfil_mediana_global
+        #self.data_calibrada /= self.perfil_std_global
+        self.data_all -= self.perfil_mediana_global
+        self.data_all /= self.perfil_std_global
 
         self.stats['unidad'] = "Sigmas (σ)"
 
@@ -250,13 +252,6 @@ class SolarAnalyzer:
         4. Si '--cal' tiene 2 argumentos -> Se asume que es un rango de horas.
         """
 
-        # CASO 1: El usuario NO escribió --cal en la terminal
-        if self.args.cal is None:
-            print("⏭️ Modo: Datos brutos (sin calibración).")
-            self.data_calibrada = self.data_all.copy()
-            self.stats['modo_cal'] = "Ninguna"
-            return
-
         print("🧪 Iniciando proceso de calibración...")
         noise_matrix = None
 
@@ -277,17 +272,17 @@ class SolarAnalyzer:
         # CASO 4: Escribió --cal 12:00 13:00
         elif len(self.args.cal) == 2:
             rango = self.args.cal
-            print(f"  -> Usando rango especificado: {rango}")
+            print(f" -> Usando rango especificado: {rango}")
             noise_matrix = self._extraer_ruido_rango(rango)
             self.stats['modo_cal'] = f"Rango manual ({rango[0]}-{rango[1]})"
 
         # CÁLCULO FINAL
         if noise_matrix is not None and noise_matrix.size > 0:
             perfil_ruido = np.nanmedian(noise_matrix, axis=0)
-            self.data_calibrada = self.data_all - perfil_ruido
+            self.data_all = self.data_all - perfil_ruido
         else:
             print("⚠️ No se pudo obtener matriz de ruido. Usando datos brutos.")
-            self.data_calibrada = self.data_all.copy()
+            return
 
     def _extraer_ruido_rango(self, rango):
         """Método privado para filtrar por tiempo."""
@@ -351,19 +346,17 @@ class SolarAnalyzer:
         return eventos
 
 
-    def procesar_potencia(self, data):
+    def procesar_potencia(self):
         """Calcula la potencia de forma consistente (sin efectos de contexto)."""
-
-        potencia_media = np.nanmean(data, axis=1)
-
+        print(f'-> Procesando la potencia de la señal integrada...')
+        potencia_media = np.nanmean(self.data_all, axis=1)
         # Suavizado
-        potencia = pd.Series(potencia_media).rolling(
-            window=8,
+        self.potencia = pd.Series(potencia_media).rolling(
+            window=5,
             center=True,
             min_periods=1   
         ).mean()
-
-        return potencia
+        print(f'--> Tamaño del vector de potencia: {len(self.potencia) ,len(self.tiempos)}')
 
 
     def limpiar_transitorios_de_archivo(self, ancho_segundos=3):
@@ -395,7 +388,7 @@ class SolarAnalyzer:
         """Crea la visualización final ax1 (espectro) y ax2 (potencia)."""
         LIMITE_VERTICAL = 5000
         # 1. Calculamos cuántas filas tiene nuestra matriz calibrada
-        num_filas_total = self.data_calibrada.shape[0]
+        num_filas_total = self.data_all.shape[0]
 
         # 2. Calculamos el factor de salto (step)
         # Si num_filas_total < 5000, factor_t será 1 (no cambia nada)
@@ -411,10 +404,10 @@ class SolarAnalyzer:
 
         # 3. Slicing inteligente: Tomamos la vista (no copia) de la matriz
         # [::factor_t, :] salta filas en el tiempo pero mantiene todas las frecuencias
-        data_plot = self.data_calibrada[::factor_t, idx_s:idx_e]
+        data_plot = self.data_all[::factor_t, idx_s:idx_e]
         tiempos_plot = self.tiempos.iloc[::factor_t]
 
-        print(f"DEBUG: Matriz {data_plot.shape}, Tiempos {tiempos_plot.shape}")
+        print(f"--> Matriz {data_plot.shape}, Tiempos {tiempos_plot.shape}")
         if hasattr(self.args, 'norm') and self.args.norm:
             unidad = "Sigmas (σ)"
             # CÁLCULO DINÁMICO DE ESCALA
@@ -428,11 +421,11 @@ class SolarAnalyzer:
             unidad = "dB"
 
         if factor_t > 1:
-            print(f"📉 Optimizando visualización: Factor de decimación {factor_t}x")
+            print(f"--> Optimizando visualización: Factor de decimación {factor_t}x")
 
-        print(f"Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} {unidad}")
+        print(f"--> Escala visual: {v_min_auto:.2f} a {v_max_auto:.2f} {unidad}")
 
-        potencia_plot = self.potencia_full.iloc[::factor_t]
+        potencia_plot = self.potencia.iloc[::factor_t]
         tiempos_plot = self.tiempos.iloc[::factor_t]
 
         # 🔥 FORZAR misma longitud
@@ -440,8 +433,8 @@ class SolarAnalyzer:
         tiempos_plot = tiempos_plot.iloc[:n]
         potencia_plot = potencia_plot.iloc[:n]
 
-        print(f"Máximo detectado: {np.nanmax(self.data_calibrada):.2f} {unidad}")
-        print(f"Promedio de los datos: {np.nanmean(self.data_calibrada):.2f} {unidad}")
+        print(f"--> Máximo detectado: {np.nanmax(self.data_all):.2f} {unidad}")
+        print(f"--> Promedio de los datos: {np.nanmean(self.data_all):.2f} {unidad}")
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
         plt.subplots_adjust(hspace=0.02)
@@ -604,21 +597,19 @@ if __name__ == "__main__":
     solar.alinear_espectro()
     solar.limpiar_transitorios_de_archivo(ancho_segundos=2)
     solar.eliminar_rfi_vertical()
-    solar.calibrar_ruido()
+
+    if args.cal:
+        solar.calibrar_ruido()
 
     if args.norm:
         solar.calcular_estadisticos_globales()
         solar.aplicar_normalizacion_global()
 
-    solar.potencia_full = solar.procesar_potencia(solar.data_calibrada)
-    solar.potencia_full.index = solar.tiempos
+    solar.procesar_potencia()
 
-    if not args.norm:
-        solar.potencia_full -= solar.potencia_full.median()
+    #solar.aplicar_filtro_temporal(args.start, args.end)
 
-    solar.aplicar_filtro_temporal(args.start, args.end)
-
-    solar.configurar_visualizacion()
+    #solar.configurar_visualizacion()
     archivo_final = solar.generar_grafico()
-    solar.detectar_eventos_transitorios(umbral=5)
-    solar.imprimir_sumario(archivo_final)
+    #solar.detectar_eventos_transitorios(umbral=5)
+    #solar.imprimir_sumario(archivo_final)
