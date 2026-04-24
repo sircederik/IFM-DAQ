@@ -14,6 +14,13 @@ import argparse
 import sys
 import os
 
+#monitoreamos la memoria
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+
 
 class SolarAnalyzer:
     CMAPS_COMUNES = ['charolastra', 'magma', 'inferno', 'viridis', 'plasma', 'jet', 'hot', 'gnuplot2','rainbow']
@@ -50,6 +57,7 @@ class SolarAnalyzer:
                 lista_df.append(temp_df)
                 self.indices_inicio_archivo.append(indice_actual)
                 indice_actual += temp_df.shape[0]
+                self.log_memoria(f'carga de archivos: ', dinamico=True)
                 del temp_df
                 gc.collect()
             except Exception as e:
@@ -77,6 +85,7 @@ class SolarAnalyzer:
         self.df_raw.sort_values(by=['datetime', 2], inplace=True)
         data_matrix = self.df_raw.iloc[:, 2:].values.astype(np.float32)
         tiempos_unicos = self.df_raw['datetime'].unique()
+        self.log_memoria(f'Alineacion de espectro...')
         del self.df_raw
         gc.collect()
 
@@ -167,6 +176,7 @@ class SolarAnalyzer:
         self.data_all /= self.perfil_std_global
 
         self.stats['unidad'] = "Sigmas (σ)"
+        self.log_memoria(f'Normalizacion memoria')
 
 
 
@@ -189,58 +199,6 @@ class SolarAnalyzer:
 
         print(f"📊 Escala RAW: {vmin:.2f} a {vmax:.2f} (Unidades originales)")
         return vmin, vmax
-
-    def preparar_data_visual_raw(self):
-        """
-        Resta el background estático para resaltar ráfagas sin normalizar.
-        Mantiene la escala de intensidad original.
-        """
-        # Calculamos el perfil de ruido base de la estación en Morelia
-        background = np.nanmedian(self.data_all, axis=0)
-        
-        # Restamos el fondo: el ruido base ahora será 0, pero los picos 
-        # conservarán su valor real sobre el piso de ruido.
-        data_visual = self.data_all - background
-        return data_visual
-
-
-    def eliminar_rfi_vertical(self, umbral_sigma=5.0):
-        print("🧹 Eliminando RFI vertical (interferencia por frecuencia)...")
-
-        data = self.data_all
-
-        # 1. Estadística por canal (frecuencia)
-        mediana_f = np.nanmedian(data, axis=0)
-        mad_f = np.nanmedian(np.abs(data - mediana_f), axis=0)
-        sigma_f = 1.4826 * mad_f
-
-        # 2. Detectar canales problemáticos
-        med_global = np.nanmedian(mediana_f)
-        sigma_global = 1.4826 * np.nanmedian(np.abs(mediana_f - med_global))
-
-        mask_rfi = np.abs(mediana_f - med_global) > umbral_sigma * sigma_global
-
-        num_rfi = np.sum(mask_rfi)
-        print(f"🚨 Canales RFI detectados: {num_rfi}")
-
-        if num_rfi == 0:
-            print("✅ No se detectó RFI significativo.")
-            return
-
-        # 3. Interpolación simple por vecinos
-        data_filtrado = data.copy()
-
-        for i in np.where(mask_rfi)[0]:
-            izq = max(i - 1, 0)
-            der = min(i + 1, data.shape[1] - 1)
-
-            # Promedio de vecinos
-            data_filtrado[:, i] = 0.5 * (data[:, izq] + data[:, der])
-
-        self.data_all = data_filtrado
-
-        print("✨ RFI vertical mitigado.")
-        print("Checksum data_all:", np.nanmean(self.data_all))
 
 
     def calibrar_ruido(self):
@@ -337,7 +295,7 @@ class SolarAnalyzer:
                 evento = {
                     'tiempo': self.tiempos.iloc[t_idx],
                     'frecuencia': self.freqs[f_idx],
-                    'intensidad': self.data_calibrada[t_idx, f_idx]
+                    'intensidad': self.data_all[t_idx, f_idx]
                 }
                 eventos.append(evento)
                 # Solo imprimimos los más significativos si son demasiados
@@ -381,14 +339,14 @@ class SolarAnalyzer:
             self.data_all[inicio:fin, :] = perfil_relleno
 
             # Debug para ver qué estamos haciendo
-            print(f"   ↳ Costura en índice {inicio}: {ancho_segundos}s reemplazados.")
+            print(f" ↳ Costura en índice {inicio}: {ancho_segundos}s reemplazados.")
 
         print("✨ Datos saneados. Los latigazos han sido neutralizados.")
 
     def generar_grafico(self):
         print(f'-> Generando gráfico...')
         """Crea la visualización final ax1 (espectro) y ax2 (potencia)."""
-        LIMITE_VERTICAL = 5000
+        LIMITE_VERTICAL = 500
         # 1. Calculamos cuántas filas tiene nuestra matriz calibrada
         num_filas_total = self.data_all.shape[0]
 
@@ -396,7 +354,7 @@ class SolarAnalyzer:
         # Si num_filas_total < 5000, factor_t será 1 (no cambia nada)
         # Si num_filas_total = 50,000, factor_t será 10 (grafica 1 de cada 10 filas)
         factor_t = max(1, num_filas_total // LIMITE_VERTICAL)
-
+        print(f'Número de filas {num_filas_total}, factor de escala {factor_t}')
         # 1. Recorte de frecuencias solicitado
         fmin = self.args.fmin if self.args.fmin else self.f_min_total
         fmax = self.args.fmax if self.args.fmax else self.f_max_total
@@ -414,7 +372,7 @@ class SolarAnalyzer:
             unidad = "Sigmas (σ)"
             # CÁLCULO DINÁMICO DE ESCALA
             # El vmin se ajusta al "piso" de los datos actuales
-            v_min_auto = 0.0 
+            v_min_auto = -1.5 
             # El vmax se ajusta a las ráfagas, dejando un margen
             v_max_auto = 3.0 
             rango = v_max_auto - v_min_auto
@@ -476,14 +434,12 @@ class SolarAnalyzer:
         ax1.set_ylabel(f"Frecuencia [MHz]")
         ax1.tick_params(labelbottom=False) # Quitar etiquetas de ax1 para que no se encimen
         # Dibujar las bandas de confianza
-        ax2.axhspan(-s1, s1, color='gray', alpha=0.15, label=f'1{unidad_txt} (Ruido)')
-        ax2.axhspan(s1, s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
-        ax2.axhspan(-s1, -s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
-        ax2.axhspan(s2, s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
-        ax2.axhspan(-s2, -s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
+        #ax2.axhspan(-s1, s1, color='gray', alpha=0.15, label=f'1{unidad_txt} (Ruido)')
+        #ax2.axhspan(s1, s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
+        #ax2.axhspan(-s1, -s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
+        #ax2.axhspan(s2, s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
+        #ax2.axhspan(-s2, -s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
 
-        # Opcional: Línea en el cero para referencia técnica
-        ax2.axhline(0, color='white', linewidth=0.8, linestyle='--', alpha=0.5)
         # Ajustar límites del eje Y dinámicamente
         #ymax =max(s3, potencia_plot.max() * 1.5)
         #ymin =min(-s1, potencia_plot.min() * 1.5)
@@ -568,8 +524,27 @@ class SolarAnalyzer:
 
         print(f"[*] Zoom final aplicado: {len(self.tiempos)} muestras en ventana.")
 
+    def log_memoria(self, etapa, dinamico=False):
+        if not HAS_PSUTIL:
+            return
 
-# --- INICIO DEL PROGRAMA ---
+        try:
+            process = psutil.Process(os.getpid())
+            mem_uso_mb = process.memory_info().rss / (1024 * 1024)
+            
+            # Usamos \r para volver al inicio de la línea y end='' para no saltar
+            formato = f"\r📊 [MEMORIA] {etapa}: {mem_uso_mb:.2f} MB"
+            
+            if dinamico:
+                # Rellenamos con espacios al final para limpiar residuos de líneas más largas
+                print(f"{formato}".ljust(50), end='', flush=True)
+            else:
+                # Si no es dinámico, imprimimos normal (un salto de línea)
+                print(f"\n{formato}")
+        except Exception:
+            pass
+
+    # --- INICIO DEL PROGRAMA ---
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
@@ -597,8 +572,8 @@ if __name__ == "__main__":
     solar = SolarAnalyzer(args)
     solar.cargar_y_limpiar()
     solar.alinear_espectro()
-    solar.limpiar_transitorios_de_archivo(ancho_segundos=2)
-    solar.eliminar_rfi_vertical()
+    solar.limpiar_transitorios_de_archivo(ancho_segundos=50)
+    #solar.eliminar_rfi_vertical()
 
     if args.cal:
         solar.calibrar_ruido()
@@ -609,9 +584,9 @@ if __name__ == "__main__":
 
     solar.procesar_potencia()
 
-    #solar.aplicar_filtro_temporal(args.start, args.end)
-
     #solar.configurar_visualizacion()
     archivo_final = solar.generar_grafico()
+
     solar.detectar_eventos_transitorios(umbral=5)
-    #solar.imprimir_sumario(archivo_final)
+    solar.imprimir_sumario(archivo_final)
+
