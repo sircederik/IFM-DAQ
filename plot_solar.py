@@ -24,7 +24,7 @@ except ImportError:
 
 class SolarAnalyzer:
     CMAPS_COMUNES = ['charolastra', 'magma', 'inferno', 'viridis', 'plasma', 'jet', 'hot', 'gnuplot2','rainbow']
-
+    RES_COMUNES = ['500', '1000', '1500', '2000', '2500', '5000']
     def __init__(self, args):
         self.args = args
         self.df_raw = None
@@ -39,6 +39,7 @@ class SolarAnalyzer:
         self.cmap_final = None
         self.freqs = None
         self.indices_inicio_archivo = []
+        self.limite_vertical=2500
 
     def cargar_y_limpiar(self):
         """Carga archivos CSV y asegura que los datos sean numéricos."""
@@ -108,11 +109,11 @@ class SolarAnalyzer:
             # Detectar sufijos de procesamiento
             suffix_cal = "_CAL" if self.args.cal is not None else ""
             suffix_norm = "_NORM" if hasattr(self.args, 'norm') and self.args.norm else ""
-            
+            suffix_res = f"_RES{self.args.res}" 
             # Reemplazar caracteres problemáticos en el mapa de color
             cmap_name = self.args.cmap.lower()
 
-            nombre = f"SOLAR_{inicio}-{fin}_{res_khz}k_{cmap_name}{suffix_cal}{suffix_norm}.png"
+            nombre = f"SOLAR_{inicio}-{fin}_{res_khz}k_{cmap_name}{suffix_cal}{suffix_norm}{suffix_res}.png"
             return nombre
 
 
@@ -346,14 +347,13 @@ class SolarAnalyzer:
     def generar_grafico(self):
         print(f'-> Generando gráfico...')
         """Crea la visualización final ax1 (espectro) y ax2 (potencia)."""
-        LIMITE_VERTICAL = 500
         # 1. Calculamos cuántas filas tiene nuestra matriz calibrada
         num_filas_total = self.data_all.shape[0]
 
         # 2. Calculamos el factor de salto (step)
         # Si num_filas_total < 5000, factor_t será 1 (no cambia nada)
         # Si num_filas_total = 50,000, factor_t será 10 (grafica 1 de cada 10 filas)
-        factor_t = max(1, num_filas_total // LIMITE_VERTICAL)
+        factor_t = max(1, num_filas_total // self.args.res)
         print(f'Número de filas {num_filas_total}, factor de escala {factor_t}')
         # 1. Recorte de frecuencias solicitado
         fmin = self.args.fmin if self.args.fmin else self.f_min_total
@@ -374,7 +374,7 @@ class SolarAnalyzer:
             # El vmin se ajusta al "piso" de los datos actuales
             v_min_auto = -1.5 
             # El vmax se ajusta a las ráfagas, dejando un margen
-            v_max_auto = 3.0 
+            v_max_auto = 1.50 
             rango = v_max_auto - v_min_auto
         else:
             v_min_auto, v_max_auto = self.obtener_limites_raw(data_plot)
@@ -554,6 +554,7 @@ if __name__ == "__main__":
 
 
     cmap_help = f"Paleta de colores a utilizar.\nOpciones comunes: {', '.join(SolarAnalyzer.CMAPS_COMUNES)}\n(por defecto: charolastra)"
+    res_help = f"Resolución de la imagen a generar.\nOpciones comunes: {', '.join(SolarAnalyzer.RES_COMUNES)}\n(por defecto: 2500)"
 
     parser.add_argument('archivos', nargs='+', help='Archivos CSV')
     parser.add_argument('--fmin', type=float)
@@ -566,13 +567,15 @@ if __name__ == "__main__":
     parser.add_argument('--start', type=str, help='Inicio: "YYYY-MM-DD HH:MM" o solo "HH:MM"')
     parser.add_argument('--end', type=str, help='Fin: "YYYY-MM-DD HH:MM" o solo "HH:MM"')
 
+    parser.add_argument('--res', type=int, default=2500, help=res_help)
+
     args = parser.parse_args()
 
     # Flujo de ejecución limpio
     solar = SolarAnalyzer(args)
     solar.cargar_y_limpiar()
     solar.alinear_espectro()
-    solar.limpiar_transitorios_de_archivo(ancho_segundos=50)
+    #solar.limpiar_transitorios_de_archivo(ancho_segundos=50)
     #solar.eliminar_rfi_vertical()
 
     if args.cal:
