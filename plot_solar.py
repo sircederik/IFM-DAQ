@@ -417,8 +417,11 @@ class SolarAnalyzer:
             zoom_end = mdates.date2num(pd.to_datetime(self.args.end))
             ax1.set_xlim(right=zoom_end)
 
-        if self.args.fmin and self.args.fmax:
-            ax1.set_ylim(float(self.args.fmin), float(self.args.fmax))
+        if self.args.fmin:
+            ax1.set_ylim(bottom=float(self.args.fmin))
+
+        if self.args.fmax:
+            ax1.set_ylim(top=float(self.args.fmax))
 
         divider = make_axes_locatable(ax1)
         cax = divider.append_axes("right", size="2%", pad=0.1)
