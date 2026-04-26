@@ -398,9 +398,6 @@ class SolarAnalyzer:
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
         plt.subplots_adjust(hspace=0.02)
-        # Espectrograma
-        #t_min = mdates.date2num(tiempos_plot.iloc[0])
-        #t_max = mdates.date2num(tiempos_plot.iloc[-1])
 
         extent = [mdates.date2num(self.tiempos.iloc[0]), mdates.date2num(self.tiempos.iloc[-1]), fmin, fmax]
         im = ax1.imshow(data_plot.T, 
@@ -412,10 +409,13 @@ class SolarAnalyzer:
                         interpolation='nearest',
                         origin='lower')
 
-        if self.args.start and self.args.end:
+        if self.args.start: 
             zoom_start = mdates.date2num(pd.to_datetime(self.args.start))
+            ax1.set_xlim(left=zoom_start)
+
+        if self.args.end:
             zoom_end = mdates.date2num(pd.to_datetime(self.args.end))
-            ax1.set_xlim(zoom_start, zoom_end)
+            ax1.set_xlim(right=zoom_end)
 
         if self.args.fmin and self.args.fmax:
             ax1.set_ylim(float(self.args.fmin), float(self.args.fmax))
