@@ -359,12 +359,12 @@ class SolarAnalyzer:
         fmin = self.args.fmin if self.args.fmin else self.f_min_total
         fmax = self.args.fmax if self.args.fmax else self.f_max_total
        
-        idx_s = np.abs(self.freqs - fmin).argmin()
-        idx_e = np.abs(self.freqs - fmax).argmin()
+        #idx_s = np.abs(self.freqs - fmin).argmin()
+        #idx_e = np.abs(self.freqs - fmax).argmin()
 
         # 3. Slicing inteligente: Tomamos la vista (no copia) de la matriz
         # [::factor_t, :] salta filas en el tiempo pero mantiene todas las frecuencias
-        data_plot = self.data_all[::factor_t, idx_s:idx_e]
+        data_plot = self.data_all[::factor_t]
         tiempos_plot = self.tiempos.iloc[::factor_t]
 
         print(f"--> Matriz {data_plot.shape}, Tiempos {tiempos_plot.shape}")
@@ -399,8 +399,8 @@ class SolarAnalyzer:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
         plt.subplots_adjust(hspace=0.02)
         # Espectrograma
-        t_min = mdates.date2num(tiempos_plot.iloc[0])
-        t_max = mdates.date2num(tiempos_plot.iloc[-1])
+        #t_min = mdates.date2num(tiempos_plot.iloc[0])
+        #t_max = mdates.date2num(tiempos_plot.iloc[-1])
 
         extent = [mdates.date2num(self.tiempos.iloc[0]), mdates.date2num(self.tiempos.iloc[-1]), fmin, fmax]
         im = ax1.imshow(data_plot.T, 
@@ -411,6 +411,14 @@ class SolarAnalyzer:
                         vmax=v_max_auto,
                         interpolation='nearest',
                         origin='lower')
+
+        if self.args.start and self.args.end:
+            zoom_start = mdates.date2num(pd.to_datetime(self.args.start))
+            zoom_end = mdates.date2num(pd.to_datetime(self.args.end))
+            ax1.set_xlim(zoom_start, zoom_end)
+
+        if self.args.fmin and self.args.fmax:
+            ax1.set_ylim(float(self.args.fmin), float(self.args.fmax))
 
         divider = make_axes_locatable(ax1)
         cax = divider.append_axes("right", size="2%", pad=0.1)
