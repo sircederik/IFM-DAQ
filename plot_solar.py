@@ -13,6 +13,7 @@ from matplotlib.colors import LogNorm, Normalize
 import argparse
 import sys
 import os
+import datetime as dt
 
 #monitoreamos la memoria
 try:
@@ -358,9 +359,6 @@ class SolarAnalyzer:
         # 1. Recorte de frecuencias solicitado
         fmin = self.args.fmin if self.args.fmin else self.f_min_total
         fmax = self.args.fmax if self.args.fmax else self.f_max_total
-       
-        #idx_s = np.abs(self.freqs - fmin).argmin()
-        #idx_e = np.abs(self.freqs - fmax).argmin()
 
         # 3. Slicing inteligente: Tomamos la vista (no copia) de la matriz
         # [::factor_t, :] salta filas en el tiempo pero mantiene todas las frecuencias
@@ -370,11 +368,8 @@ class SolarAnalyzer:
         print(f"--> Matriz {data_plot.shape}, Tiempos {tiempos_plot.shape}")
         if hasattr(self.args, 'norm') and self.args.norm:
             unidad = "Sigmas (σ)"
-            # CÁLCULO DINÁMICO DE ESCALA
-            # El vmin se ajusta al "piso" de los datos actuales
             v_min_auto = -1.5 
-            # El vmax se ajusta a las ráfagas, dejando un margen
-            v_max_auto = 1.50 
+            v_max_auto = 2.0 
             rango = v_max_auto - v_min_auto
         else:
             v_min_auto, v_max_auto = self.obtener_limites_raw(data_plot)
@@ -439,8 +434,6 @@ class SolarAnalyzer:
             s2, s3 , s4, s5, s6= 2*s1, 3*s1, 4*s1, 5*s1, 6*s1
             unidad_txt = "dB"
 
-
-        #ax1.set_xlabel(f"Tiempo [LC]")
         ax1.set_title(f"Análisis Radioastronómico Solar: {fmin}-{np.round(fmax)} MHz")
         ax1.set_ylabel(f"Frecuencia [MHz]")
         ax1.tick_params(labelbottom=False) # Quitar etiquetas de ax1 para que no se encimen
@@ -452,12 +445,8 @@ class SolarAnalyzer:
         #ax2.axhspan(-s2, -s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
 
         # Ajustar límites del eje Y dinámicamente
-        #ymax =max(s3, potencia_plot.max() * 1.5)
-        #ymin =min(-s1, potencia_plot.min() * 1.5)
-        #ax2.set_ylim(ymin, ymax)
         ax2.margins(x=0)
         ax2.xaxis_date()
-        ax2.set_xlabel(f"Tiempo [LT]")
 
         fig.canvas.draw()
         pos1 = ax1.get_position()
@@ -467,10 +456,18 @@ class SolarAnalyzer:
         locator = mdates.AutoDateLocator()
         ax2.xaxis.set_major_locator(locator)
         ax2.set_ylabel(f"Flujo Relativo {unidad}")
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d'))
+
+        if self.args.utc:
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d', tz=tz_utc))
+            TZ=f'[UTC]'
+        else:
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d'))
+            TZ=f'[LT]'
+        ax2.set_xlabel(f"Tiempo {TZ}")
+
         plt.setp(ax2.get_xticklabels(), rotation=45, ha='right')
         ax2.plot(tiempos_plot, potencia_plot, color='red', linewidth=1.3)
-        #plt.tight_layout()
+
         if self.args.output:
             output_name = self.args.output
         else:
@@ -558,6 +555,8 @@ class SolarAnalyzer:
     # --- INICIO DEL PROGRAMA ---
 if __name__ == "__main__":
 
+    tz_utc = dt.timezone(dt.timedelta(hours=6))
+
     parser = argparse.ArgumentParser(
         description='Analizador Solar Modular - Basado en radioastronomía de baja frecuencia.',
         formatter_class=argparse.RawTextHelpFormatter # Para que respete los saltos de línea en la ayuda
@@ -580,6 +579,7 @@ if __name__ == "__main__":
 
     parser.add_argument('--res', type=int, default=2500, help=res_help)
 
+    parser.add_argument('--utc', action='store_true', help='Usar tiempo universal UTC)')
     args = parser.parse_args()
 
     # Flujo de ejecución limpio
