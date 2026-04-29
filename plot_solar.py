@@ -413,7 +413,7 @@ class SolarAnalyzer:
         print(f"--> Máximo detectado: {np.nanmax(self.data_all):.2f} {unidad}")
         print(f"--> Promedio de los datos: {np.nanmean(self.data_all):.2f} {unidad}")
 
-        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(8.5, 7.1), gridspec_kw={'height_ratios': [3, 1]}, sharex=True, dpi=120)
+        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(18.5, 17.1), gridspec_kw={'height_ratios': [3, 1]}, sharex=True, dpi=120)
         plt.subplots_adjust(hspace=0.02)
 
         extent = [mdates.date2num(self.tiempos.iloc[0]), mdates.date2num(self.tiempos.iloc[-1]), fmin, fmax]
@@ -502,7 +502,7 @@ class SolarAnalyzer:
                 output_name = self._generar_nombre_default()
                 # Opcional: añadir sigmas al nombre si vmin fue modificado
                 if vmin is not None:
-                    output_name = output_name.replace(".jpg", f"_S{vmin:.1f}_{vmax:.1f}.jpg")
+                    output_name = output_name.replace(".png", f"_S{vmin:.1f}_{vmax:.1f}.png")
 
             self.fig.align_labels() 
             #plt.tight_layout() #s lo que hace que la imagen se vea "hermosa" y ordenada
@@ -595,10 +595,10 @@ def inyectar_controles_interactivos(instancia_solar):
     Inyecta widgets sobre la figura de Matplotlib para ajuste dinámico.
     """
     # 1. Dejar espacio en la parte inferior para los controles
-    plt.subplots_adjust(bottom=0.32)
+    plt.subplots_adjust(bottom=0.26)
     
     # 2. Ejes para el slider y el botón [izquierda, fondo, ancho, alto]
-    ax_slider = plt.axes([0.15, 0.08, 0.55, 0.03])
+    ax_slider = plt.axes([0.15, 0.08, 0.50, 0.03])
     ax_button = plt.axes([0.75, 0.075, 0.12, 0.04])
     
     # 3. Obtener límites actuales de la imagen (self.im)
@@ -606,13 +606,13 @@ def inyectar_controles_interactivos(instancia_solar):
     
     # 4. Crear el Slider de rango
     slider_sigma = RangeSlider(
-        ax_slider, 'Sigmas ', -5.0, 5.0, 
+        ax_slider, 'Signif. ', -2.0, 6.0, 
         valinit=(vmin_init, vmax_init),
         valfmt='%1.1f σ'
     )
     
     # 5. Crear el Botón de guardado
-    btn_guardar = Button(ax_button, '💾 Guardar', color='#e1f5fe', hovercolor='skyblue')
+    btn_guardar = Button(ax_button, 'Guardar', color='#82c2df', hovercolor='skyblue')
 
     # --- Funciones de evento ---
     def update(val):
@@ -663,6 +663,7 @@ if __name__ == "__main__":
     parser.add_argument('--end', type=str, help='Fin: "YYYY-MM-DD HH:MM" o solo "HH:MM"')
 
     parser.add_argument('--res', type=int, default=2500, help=res_help)
+    parser.add_argument('--interactive', action='store_true', help='Abrir ventana interactiva')
 
     parser.add_argument('--utc', action='store_true', help='Usar tiempo universal UTC)')
     args = parser.parse_args()
@@ -684,9 +685,17 @@ if __name__ == "__main__":
     solar.procesar_potencia()
 
     #solar.configurar_visualizacion()
-    archivo_final=solar.generar_grafico(interactivo=True)
-    controles=inyectar_controles_interactivos(solar)
-    plt.show()
+    if args.interactive:
+        print(f'-> Ventana interactiva solicitada...')
+        archivo_final=solar.generar_grafico(interactivo=True)
+        controles=inyectar_controles_interactivos(solar)
+        plt.show()
+        print(f'{archivo_final}')
+
+    else:
+        print(f'-> Ventana interactiva no solicitada...')
+        archivo_final=solar.generar_grafico(interactivo=False)
+    #plt.show()
 
     solar.detectar_eventos_transitorios(umbral=5)
     solar.imprimir_sumario(archivo_final)
