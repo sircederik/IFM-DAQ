@@ -350,11 +350,22 @@ class SolarAnalyzer:
 
         print("✨ Datos saneados. Los latigazos han sido neutralizados.")
 
-
+    def _alinear_ejes(self):
+        """Ajusta ax2 para que coincida exactamente con el ancho de ax1 en pantalla."""
+        try:
+            # Forzar que Matplotlib calcule las posiciones actuales
+            pos1 = self.ax1.get_position()
+            pos2 = self.ax2.get_position()
+            
+            # Sincronizar el eje de potencia con el del espectrograma
+            self.ax2.set_position([pos1.x0, pos2.y0, pos1.width, pos2.height])
+        except AttributeError:
+            pass
 
 
     def generar_grafico(self, vmin=None, vmax=None, interactivo=False):
         print(f'-> Generando gráfico...')
+
         """Crea la visualización final self.ax1 (espectro) y self.ax2 (potencia)."""
         # 1. Calculamos cuántas filas tiene nuestra matriz calibrada
         num_filas_total = self.data_all.shape[0]
@@ -402,7 +413,7 @@ class SolarAnalyzer:
         print(f"--> Máximo detectado: {np.nanmax(self.data_all):.2f} {unidad}")
         print(f"--> Promedio de los datos: {np.nanmean(self.data_all):.2f} {unidad}")
 
-        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
+        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(8.5, 7.1), gridspec_kw={'height_ratios': [3, 1]}, sharex=True, dpi=120)
         plt.subplots_adjust(hspace=0.02)
 
         extent = [mdates.date2num(self.tiempos.iloc[0]), mdates.date2num(self.tiempos.iloc[-1]), fmin, fmax]
@@ -481,8 +492,7 @@ class SolarAnalyzer:
 
     # Lógica de salida ajustada
         if interactivo:
-            # En modo interactivo, NO guardamos ni cerramos aquí. 
-            # Devolvemos el control para que el slider haga su trabajo.
+            self.fig.canvas.mpl_connect('draw_event', lambda event: self._alinear_ejes())
             return None 
         else:
             # Modo estándar o disparado por el botón "Guardar" del slider
@@ -493,6 +503,10 @@ class SolarAnalyzer:
                 # Opcional: añadir sigmas al nombre si vmin fue modificado
                 if vmin is not None:
                     output_name = output_name.replace(".jpg", f"_S{vmin:.1f}_{vmax:.1f}.jpg")
+
+            self.fig.align_labels() 
+            #plt.tight_layout() #s lo que hace que la imagen se vea "hermosa" y ordenada
+            #self.fig.tight_layout(rect=[0, 0.03, 1, 0.95]) # Deja un pequeño espacio arriba/abajo
 
             plt.savefig(output_name, dpi=300, bbox_inches='tight')
             print(f"✅ Gráfico guardado como: {output_name}")
@@ -581,7 +595,7 @@ def inyectar_controles_interactivos(instancia_solar):
     Inyecta widgets sobre la figura de Matplotlib para ajuste dinámico.
     """
     # 1. Dejar espacio en la parte inferior para los controles
-    plt.subplots_adjust(bottom=0.22)
+    plt.subplots_adjust(bottom=0.32)
     
     # 2. Ejes para el slider y el botón [izquierda, fondo, ancho, alto]
     ax_slider = plt.axes([0.15, 0.08, 0.55, 0.03])
@@ -619,6 +633,10 @@ def inyectar_controles_interactivos(instancia_solar):
     
     # Retornar los objetos para mantener las referencias vivas en el main
     return slider_sigma, btn_guardar
+
+
+
+
    # --- INICIO DEL PROGRAMA ---
 if __name__ == "__main__":
 
