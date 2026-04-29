@@ -2,18 +2,23 @@
 # -*- coding: utf-8 -*-
 
 import gc
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.colors import ListedColormap
-from matplotlib.colors import hsv_to_rgb
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from matplotlib.colors import LogNorm, Normalize
 import argparse
 import sys
 import os
 import datetime as dt
+import pandas as pd
+import numpy as np
+
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+from matplotlib.colors import ListedColormap
+from matplotlib.colors import hsv_to_rgb
+from matplotlib.colors import LogNorm, Normalize
+from matplotlib.widgets import RangeSlider, Button
+
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 
 #monitoreamos la memoria
 try:
@@ -345,9 +350,12 @@ class SolarAnalyzer:
 
         print("✨ Datos saneados. Los latigazos han sido neutralizados.")
 
-    def generar_grafico(self):
+
+
+
+    def generar_grafico(self, vmin=None, vmax=None, interactivo=False):
         print(f'-> Generando gráfico...')
-        """Crea la visualización final ax1 (espectro) y ax2 (potencia)."""
+        """Crea la visualización final self.ax1 (espectro) y self.ax2 (potencia)."""
         # 1. Calculamos cuántas filas tiene nuestra matriz calibrada
         num_filas_total = self.data_all.shape[0]
 
@@ -365,12 +373,15 @@ class SolarAnalyzer:
         data_plot = self.data_all[::factor_t]
         tiempos_plot = self.tiempos.iloc[::factor_t]
 
-        print(f"--> Matriz {data_plot.shape}, Tiempos {tiempos_plot.shape}")
-        if hasattr(self.args, 'norm') and self.args.norm:
+
+        # Priorizar valores externos (del slider) sobre los automáticos
+        if vmin is not None and vmax is not None:
+            v_min_auto, v_max_auto = vmin, vmax
+            unidad = "Sigmas (σ)" if self.args.norm else "dB"
+        elif hasattr(self.args, 'norm') and self.args.norm:
             unidad = "Sigmas (σ)"
             v_min_auto = -1.5 
             v_max_auto = 2.0 
-            rango = v_max_auto - v_min_auto
         else:
             v_min_auto, v_max_auto = self.obtener_limites_raw(data_plot)
             unidad = "dB"
@@ -391,11 +402,11 @@ class SolarAnalyzer:
         print(f"--> Máximo detectado: {np.nanmax(self.data_all):.2f} {unidad}")
         print(f"--> Promedio de los datos: {np.nanmean(self.data_all):.2f} {unidad}")
 
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
+        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
         plt.subplots_adjust(hspace=0.02)
 
         extent = [mdates.date2num(self.tiempos.iloc[0]), mdates.date2num(self.tiempos.iloc[-1]), fmin, fmax]
-        im = ax1.imshow(data_plot.T, 
+        self.im = self.ax1.imshow(data_plot.T, 
                         aspect='auto', 
                         extent=extent, 
                         cmap=self.cmap_final, 
@@ -406,21 +417,21 @@ class SolarAnalyzer:
 
         if self.args.start: 
             zoom_start = mdates.date2num(pd.to_datetime(self.args.start))
-            ax1.set_xlim(left=zoom_start)
+            self.ax1.set_xlim(left=zoom_start)
 
         if self.args.end:
             zoom_end = mdates.date2num(pd.to_datetime(self.args.end))
-            ax1.set_xlim(right=zoom_end)
+            self.ax1.set_xlim(right=zoom_end)
 
         if self.args.fmin:
-            ax1.set_ylim(bottom=float(self.args.fmin))
+            self.ax1.set_ylim(bottom=float(self.args.fmin))
 
         if self.args.fmax:
-            ax1.set_ylim(top=float(self.args.fmax))
+            self.ax1.set_ylim(top=float(self.args.fmax))
 
-        divider = make_axes_locatable(ax1)
+        divider = make_axes_locatable(self.ax1)
         cax = divider.append_axes("right", size="2%", pad=0.1)
-        plt.colorbar(im, cax=cax, label=f'Intensidad {unidad}')
+        plt.colorbar(self.im, cax=cax, label=f'Intensidad {unidad}')
 
 
         # Definimos los niveles según si está normalizado o no
@@ -434,50 +445,62 @@ class SolarAnalyzer:
             s2, s3 , s4, s5, s6= 2*s1, 3*s1, 4*s1, 5*s1, 6*s1
             unidad_txt = "dB"
 
-        ax1.set_title(f"Análisis Radioastronómico Solar: {fmin}-{np.round(fmax)} MHz")
-        ax1.set_ylabel(f"Frecuencia [MHz]")
-        ax1.tick_params(labelbottom=False) # Quitar etiquetas de ax1 para que no se encimen
+        self.ax1.set_title(f"Análisis Radioastronómico Solar: {fmin}-{np.round(fmax)} MHz")
+        self.ax1.set_ylabel(f"Frecuencia [MHz]")
+        self.ax1.tick_params(labelbottom=False) # Quitar etiquetas de self.ax1 para que no se encimen
         # Dibujar las bandas de confianza
-        #ax2.axhspan(-s1, s1, color='gray', alpha=0.15, label=f'1{unidad_txt} (Ruido)')
-        #ax2.axhspan(s1, s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
-        #ax2.axhspan(-s1, -s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
-        #ax2.axhspan(s2, s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
-        #ax2.axhspan(-s2, -s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
+        #self.ax2.axhspan(-s1, s1, color='gray', alpha=0.15, label=f'1{unidad_txt} (Ruido)')
+        #self.ax2.axhspan(s1, s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
+        #self.ax2.axhspan(-s1, -s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
+        #self.ax2.axhspan(s2, s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
+        #self.ax2.axhspan(-s2, -s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
 
         # Ajustar límites del eje Y dinámicamente
-        ax2.margins(x=0)
-        ax2.xaxis_date()
+        self.ax2.margins(x=0)
+        self.ax2.xaxis_date()
 
-        fig.canvas.draw()
-        pos1 = ax1.get_position()
-        pos2 = ax2.get_position()
-        ax2.set_position([pos1.x0, pos2.y0, pos1.width, pos2.height])
+        self.fig.canvas.draw()
+        pos1 = self.ax1.get_position()
+        pos2 = self.ax2.get_position()
+        self.ax2.set_position([pos1.x0, pos2.y0, pos1.width, pos2.height])
 
         locator = mdates.AutoDateLocator()
-        ax2.xaxis.set_major_locator(locator)
-        ax2.set_ylabel(f"Flujo Relativo {unidad}")
+        self.ax2.xaxis.set_major_locator(locator)
+        self.ax2.set_ylabel(f"Flujo Relativo {unidad}")
 
         if self.args.utc:
-            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d', tz=tz_utc))
+            self.ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d', tz=tz_utc))
             TZ=f'[UTC]'
         else:
-            ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d'))
+            self.ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d'))
             TZ=f'[LT]'
-        ax2.set_xlabel(f"Tiempo {TZ}")
+        self.ax2.set_xlabel(f"Tiempo {TZ}")
 
-        plt.setp(ax2.get_xticklabels(), rotation=45, ha='right')
-        ax2.plot(tiempos_plot, potencia_plot, color='red', linewidth=1.3)
+        plt.setp(self.ax2.get_xticklabels(), rotation=45, ha='right')
+        self.ax2.plot(tiempos_plot, potencia_plot, color='red', linewidth=1.3)
 
-        if self.args.output:
-            output_name = self.args.output
+    # Lógica de salida ajustada
+        if interactivo:
+            # En modo interactivo, NO guardamos ni cerramos aquí. 
+            # Devolvemos el control para que el slider haga su trabajo.
+            return None 
         else:
-            output_name = self._generar_nombre_default()
+            # Modo estándar o disparado por el botón "Guardar" del slider
+            if self.args.output:
+                output_name = self.args.output
+            else:
+                output_name = self._generar_nombre_default()
+                # Opcional: añadir sigmas al nombre si vmin fue modificado
+                if vmin is not None:
+                    output_name = output_name.replace(".jpg", f"_S{vmin:.1f}_{vmax:.1f}.jpg")
 
-        plt.savefig(output_name, dpi=300, bbox_inches='tight')
-        plt.close('all')
-        gc.collect()
-        print(f"✅ Gráfico guardado como: {output_name}")
-        return output_name
+            plt.savefig(output_name, dpi=300, bbox_inches='tight')
+            print(f"✅ Gráfico guardado como: {output_name}")
+            # Solo cerramos si no estamos en una sesión interactiva activa
+            if not plt.isinteractive():
+                plt.close('all')
+                gc.collect()
+            return output_name
 
 
     def imprimir_sumario(self, output_file):
@@ -552,7 +575,51 @@ class SolarAnalyzer:
         except Exception:
             pass
 
-    # --- INICIO DEL PROGRAMA ---
+
+def inyectar_controles_interactivos(instancia_solar):
+    """
+    Inyecta widgets sobre la figura de Matplotlib para ajuste dinámico.
+    """
+    # 1. Dejar espacio en la parte inferior para los controles
+    plt.subplots_adjust(bottom=0.22)
+    
+    # 2. Ejes para el slider y el botón [izquierda, fondo, ancho, alto]
+    ax_slider = plt.axes([0.15, 0.08, 0.55, 0.03])
+    ax_button = plt.axes([0.75, 0.075, 0.12, 0.04])
+    
+    # 3. Obtener límites actuales de la imagen (self.im)
+    vmin_init, vmax_init = instancia_solar.im.get_clim()
+    
+    # 4. Crear el Slider de rango
+    slider_sigma = RangeSlider(
+        ax_slider, 'Sigmas ', -5.0, 5.0, 
+        valinit=(vmin_init, vmax_init),
+        valfmt='%1.1f σ'
+    )
+    
+    # 5. Crear el Botón de guardado
+    btn_guardar = Button(ax_button, '💾 Guardar', color='#e1f5fe', hovercolor='skyblue')
+
+    # --- Funciones de evento ---
+    def update(val):
+        # Actualiza el mapeo de color en tiempo real
+        instancia_solar.im.set_clim(val[0], val[1])
+        instancia_solar.fig.canvas.draw_idle()
+
+    def al_clickear_guardar(event):
+        # Al presionar el botón, se llama al método original de la clase
+        v_min, v_max = slider_sigma.val
+        print(f"--> Guardando captura personalizada: {v_min:.2f} a {v_max:.2f} σ")
+        # Se pasa interactivo=False para que ejecute el savefig interno
+        instancia_solar.generar_grafico(vmin=v_min, vmax=v_max, interactivo=False)
+
+    # Conectar eventos
+    slider_sigma.on_changed(update)
+    btn_guardar.on_clicked(al_clickear_guardar)
+    
+    # Retornar los objetos para mantener las referencias vivas en el main
+    return slider_sigma, btn_guardar
+   # --- INICIO DEL PROGRAMA ---
 if __name__ == "__main__":
 
     tz_utc = dt.timezone(dt.timedelta(hours=6))
@@ -599,7 +666,9 @@ if __name__ == "__main__":
     solar.procesar_potencia()
 
     #solar.configurar_visualizacion()
-    archivo_final = solar.generar_grafico()
+    archivo_final=solar.generar_grafico(interactivo=True)
+    controles=inyectar_controles_interactivos(solar)
+    plt.show()
 
     solar.detectar_eventos_transitorios(umbral=5)
     solar.imprimir_sumario(archivo_final)
