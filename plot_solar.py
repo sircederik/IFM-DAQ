@@ -19,6 +19,9 @@ from matplotlib.widgets import RangeSlider, Button
 
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+#Para la parte (experimental de la generación del archivo de audio)
+from scipy.io import wavfile
+from scipy.interpolate import interp1d
 
 #monitoreamos la memoria
 try:
@@ -324,6 +327,23 @@ class SolarAnalyzer:
         ).mean()
         print(f'--> Tamaño del vector de potencia: {len(self.potencia) ,len(self.tiempos)}')
 
+    def sonificar_datos(self, sample_rate=44100):
+        print(f'-> [SONIFICACIÓN] audio con duración de: {self.args.audio} s y sample-rate {sample_rate} Hz.')
+        duracion_segundos = self.args.audio
+        puntos_finales = duracion_segundos * sample_rate
+        x_actual = np.linspace(0, 1, len(self.potencia.to_numpy()))
+        x_nuevo = np.linspace(0, 1, puntos_finales)
+    
+        # Interpolación lineal para crear puntos intermedios
+        interpolador = interp1d(x_actual, self.potencia.to_numpy(), kind='nearest')
+        datos_estirados = interpolador(x_nuevo)
+    
+        # Normalizar y guardar
+        audio_signal = datos_estirados / np.nanmax(np.abs(datos_estirados))
+        audio_int16 = (audio_signal * 32767).astype(np.int16)
+        nombre_archivo=self._generar_nombre_default().replace(".png",".wav")
+        wavfile.write(nombre_archivo, sample_rate, audio_int16)
+        print(f"-> [SONIFICACIÓN] Archivo {nombre_archivo} generado.")
 
     def limpiar_transitorios_de_archivo(self, ancho_segundos=3):
         if self.indices_inicio_archivo is None or len(self.indices_inicio_archivo) == 0:
@@ -635,8 +655,6 @@ def inyectar_controles_interactivos(instancia_solar):
     return slider_sigma, btn_guardar
 
 
-
-
    # --- INICIO DEL PROGRAMA ---
 if __name__ == "__main__":
 
@@ -666,6 +684,7 @@ if __name__ == "__main__":
     parser.add_argument('--interactive', action='store_true', help='Abrir ventana interactiva')
 
     parser.add_argument('--utc', action='store_true', help='Usar tiempo universal UTC)')
+    parser.add_argument('--audio', type=int, default=10, help='Generar una archivo de audio con duración en segundos.')
     args = parser.parse_args()
 
     # Flujo de ejecución limpio
@@ -696,7 +715,9 @@ if __name__ == "__main__":
         print(f'-> Ventana interactiva no solicitada...')
         archivo_final=solar.generar_grafico(interactivo=False)
     #plt.show()
-
-    solar.detectar_eventos_transitorios(umbral=5)
-    solar.imprimir_sumario(archivo_final)
+    
+    if args.audio:
+        solar.sonificar_datos()
+    #solar.detectar_eventos_transitorios(umbral=5)
+    #solar.imprimir_sumario(archivo_final)
 
