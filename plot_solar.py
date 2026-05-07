@@ -385,10 +385,10 @@ class SolarAnalyzer:
 
     def generar_grafico(self, vmin=None, vmax=None, interactivo=False):
         print(f'-> Generando gráfico...')
-
-        plt.rcParams.update({'font.size': 18})
-        plt.rcParams['axes.titlesize'] = 22  # Tamaño del título principal
-        plt.rcParams['axes.labelsize'] = 20
+        if interactivo == False:
+            plt.rcParams.update({'font.size': 18})
+            plt.rcParams['axes.titlesize'] = 22  # Tamaño del título principal
+            plt.rcParams['axes.labelsize'] = 20
 
         """Crea la visualización final self.ax1 (espectro) y self.ax2 (potencia)."""
         # 1. Calculamos cuántas filas tiene nuestra matriz calibrada
