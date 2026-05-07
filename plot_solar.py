@@ -386,6 +386,10 @@ class SolarAnalyzer:
     def generar_grafico(self, vmin=None, vmax=None, interactivo=False):
         print(f'-> Generando gráfico...')
 
+        plt.rcParams.update({'font.size': 18})
+        plt.rcParams['axes.titlesize'] = 22  # Tamaño del título principal
+        plt.rcParams['axes.labelsize'] = 20
+
         """Crea la visualización final self.ax1 (espectro) y self.ax2 (potencia)."""
         # 1. Calculamos cuántas filas tiene nuestra matriz calibrada
         num_filas_total = self.data_all.shape[0]
@@ -684,7 +688,7 @@ if __name__ == "__main__":
     parser.add_argument('--interactive', action='store_true', help='Abrir ventana interactiva')
 
     parser.add_argument('--utc', action='store_true', help='Usar tiempo universal UTC)')
-    parser.add_argument('--audio', type=int, default=10, help='Generar una archivo de audio con duración en segundos.')
+    parser.add_argument('--audio', type=int,  help='Generar una archivo de audio con duración en segundos.')
     args = parser.parse_args()
 
     # Flujo de ejecución limpio
