@@ -437,7 +437,7 @@ class SolarAnalyzer:
         print(f"--> Máximo detectado: {np.nanmax(self.data_all):.2f} {unidad}")
         print(f"--> Promedio de los datos: {np.nanmean(self.data_all):.2f} {unidad}")
 
-        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(18.5, 17.1), gridspec_kw={'height_ratios': [3, 1]}, sharex=True, dpi=120)
+        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(18.5, 17.1), gridspec_kw={'height_ratios': [5, 1]}, sharex=True, dpi=120)
         plt.subplots_adjust(hspace=0.02)
 
         extent = [mdates.date2num(self.tiempos.iloc[0]), mdates.date2num(self.tiempos.iloc[-1]), fmin, fmax]
