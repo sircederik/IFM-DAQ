@@ -87,6 +87,7 @@ class SolarAnalyzer:
         self.f_min_total = self.df_raw[2].min() / 1e6
         self.f_max_total = self.df_raw[3].max() / 1e6
         self.f_step = self.df_raw.iloc[0, 4] / 1e6
+
         num_hops = self.df_raw[2].nunique() # Debería ser 3 según tu archivo
 
         self.df_raw['datetime'] = pd.to_datetime(self.df_raw[0] + ' ' + self.df_raw[1])
@@ -179,12 +180,8 @@ class SolarAnalyzer:
     def aplicar_normalizacion_global(self):
         print("⚖ Aplicando normalización global (Z-score fijo)...")
 
-        #self.data_calibrada = self.data_all.copy()
-        #self.data_calibrada -= self.perfil_mediana_global
-        #self.data_calibrada /= self.perfil_std_global
         self.data_all -= self.perfil_mediana_global
         self.data_all /= self.perfil_std_global
-
         self.stats['unidad'] = "Sigmas (σ)"
         self.log_memoria(f'Normalizacion memoria')
 

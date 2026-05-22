@@ -1,2 +1,2 @@
-2026-05-19 13:00 h - Conección de antena
-2026-05-18 15:00 h - Desconección de antena
+2026-05-19 13:00 h - Conexión de antena
+2026-05-18 15:00 h - Desconexión de antena
