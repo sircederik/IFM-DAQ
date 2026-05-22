@@ -80,35 +80,85 @@ class SolarAnalyzer:
         print(f"✅ Carga completa. {len(lista_df)} archivos unidos.")
         print(f"📍 Costuras detectadas en índices: {self.indices_inicio_archivo}")
 
-    def alinear_espectro(self):
-        """Une los saltos de frecuencia  mediante vectorización."""
-        print("🚀 Alineando saltos de frecuencia...")
 
+    def alinear_espectro(self):
+        """
+        Une los saltos de frecuencia de los tres bloques de banda ancha,
+        mapeando quirúrgicamente los bines de DB a sus coordenadas reales.
+        """
+        print("🚀 Alineando saltos de frecuencia basados en estructura CSV...")
+
+        # 1. Definir los parámetros reales desde el archivo
         self.f_min_total = self.df_raw[2].min() / 1e6
         self.f_max_total = self.df_raw[3].max() / 1e6
         self.f_step = self.df_raw.iloc[0, 4] / 1e6
+        
+        # Obtener los inicios únicos de tus 3 bloques (ej. 16MHz, 18.66MHz, 21.33MHz)
+        saltos_unicos = sorted(self.df_raw[2].unique())
+        num_hops = len(saltos_unicos)
+        print(f"--> Detectados {num_hops} bloques físicos iniciando en: {[f/1e6 for f in saltos_unicos]} MHz")
 
-        num_hops = self.df_raw[2].nunique() # Debería ser 3 según tu archivo
-
+        # 2. Vectorizar el eje temporal
         self.df_raw['datetime'] = pd.to_datetime(self.df_raw[0] + ' ' + self.df_raw[1])
-        cols_datos = list(range(6, self.df_raw.shape[1] - 1)) # -1 por la nueva col datetime
-        self.df_raw = self.df_raw[['datetime', 2] + cols_datos]
-        self.df_raw.sort_values(by=['datetime', 2], inplace=True)
-        data_matrix = self.df_raw.iloc[:, 2:].values.astype(np.float32)
-        tiempos_unicos = self.df_raw['datetime'].unique()
-        self.log_memoria(f'Alineacion de espectro...')
+        tiempos_unicos = np.sort(self.df_raw['datetime'].unique())
+        self.tiempos = pd.Series(tiempos_unicos)
+        
+        # Diccionario para indexar rápidamente filas por tiempo
+        dict_tiempos = {t: i for i, t in enumerate(tiempos_unicos)}
+
+        # 3. Determinar las columnas de datos (de la 6 en adelante)
+        cols_datos = [c for c in self.df_raw.columns if isinstance(c, int) and c >= 6]
+        bins_per_hop = len(cols_datos)  # Esto será exactamente 32 según tu archivo
+        num_canales_total = num_hops * bins_per_hop
+        
+        # Construir eje de frecuencias lineal para el gráfico
+        self.freqs = np.linspace(self.f_min_total, self.f_max_total, num_canales_total)
+        print(f"✅ Vector de frecuencias lineal creado: {len(self.freqs)} puntos (3 bloques x {bins_per_hop} bines).")
+
+        # 4. Inicializar matriz maestra (vacía con NaNs)
+        self.data_all = np.full((len(tiempos_unicos), num_canales_total), np.nan, dtype=np.float32)
+
+        # 5. Inyectar bloque por bloque calculando su posición física real
+        print("🧩 Ensamblando espectro y corrigiendo inversión de mitades (I/Q Shift)...")
+        for f_salto in saltos_unicos:
+            df_bloque = self.df_raw[self.df_raw[2] == f_salto]
+            if df_bloque.empty:
+                continue
+
+            filas_tiempo = df_bloque['datetime'].values
+            matriz_bloque_raw = df_bloque[cols_datos].values.astype(np.float32)
+
+            # ===============================================================
+            # 🔄 CORRECCIÓN MAESTRA: INVERTIR LAS MITADES DE CADA BLOQUE
+            # Dividimos los 32 bines a la mitad (bin 16) e intercambiamos las posiciones
+            mitad = bins_per_hop // 2
+            mitad_izquierda = matriz_bloque_raw[:, :mitad]
+            mitad_derecha = matriz_bloque_raw[:, mitad:]
+            
+            # Reensamblamos el bloque poniendo la derecha primero
+            matriz_bloque_corregida = np.hstack((mitad_derecha, mitad_izquierda))
+            # ===============================================================
+
+            # Calcular el rango de columnas exactas en la matriz maestra
+            f_salto_mhz = f_salto / 1e6
+            col_inicio = int(round((f_salto_mhz - self.f_min_total) / self.f_step))
+            col_fin = col_inicio + bins_per_hop
+
+            # Mapear los índices de tiempo de forma vectorizada
+            idx_filas_destino = [dict_tiempos[t] for t in filas_tiempo]
+
+            # Inyectar el bloque corregido en su coordenada absoluta
+            self.data_all[idx_filas_destino, col_inicio:col_fin] = matriz_bloque_corregida
+
+            #corrección a los NaN que aparecen en los bordes de las frecuencias o costuras de tiempo
+            self.data_all = np.where(np.isnan(self.data_all),-52.0 , self.data_all)
+            print(f"   ↳ Bloque {f_salto_mhz:.2f} MHz -> Mitades invertidas y mapeado en [{col_inicio}:{col_fin}]")
+
+        # 6. Liberación agresiva de memoria RAM
+        self.log_memoria('Alineación completada')
         del self.df_raw
         gc.collect()
-
-        bins_per_hop = data_matrix.shape[1]
-        self.data_all = data_matrix.reshape(len(tiempos_unicos), num_hops * bins_per_hop)
-        num_canales_total = self.data_all.shape[1] 
-        
-        self.freqs = np.linspace(self.f_min_total, self.f_max_total, num_canales_total)
-        print(f"✅ Vector de frecuencias reconstruido: {len(self.freqs)} puntos.")
-
-        self.tiempos = pd.Series(tiempos_unicos).sort_values()
-        print(f"✅ Vector de tiempos ordenado.")
+        print(f"✅ Reconstrucción exitosa. Tamaño de matriz limpia: {self.data_all.shape}")
 
     def _generar_nombre_default(self):
             """Genera un nombre de archivo basado en fechas, frecuencias y procesos."""
@@ -412,8 +462,8 @@ class SolarAnalyzer:
             unidad = "Sigmas (σ)" if self.args.norm else "dB"
         elif hasattr(self.args, 'norm') and self.args.norm:
             unidad = "Sigmas (σ)"
-            v_min_auto = -1.5 
-            v_max_auto = 2.0 
+            v_min_auto = -0.5 
+            v_max_auto = 3.5 
         else:
             v_min_auto, v_max_auto = self.obtener_limites_raw(data_plot)
             unidad = "dB"
