@@ -108,9 +108,9 @@ class SolarAnalyzer:
 
         # 3. Determinar las columnas de datos (de la 6 en adelante)
         cols_datos = [c for c in self.df_raw.columns if isinstance(c, int) and c >= 6]
-        bins_per_hop = len(cols_datos)  # Esto será exactamente 32 según tu archivo
+        bins_per_hop = len(cols_datos)  
         num_canales_total = num_hops * bins_per_hop
-        
+        print(f'Bines de datos: {bins_per_hop} , numero de canales :  {num_canales_total} ' ) 
         # Construir eje de frecuencias lineal para el gráfico
         self.freqs = np.linspace(self.f_min_total, self.f_max_total, num_canales_total)
         print(f"✅ Vector de frecuencias lineal creado: {len(self.freqs)} puntos (3 bloques x {bins_per_hop} bines).")
@@ -466,6 +466,7 @@ class SolarAnalyzer:
             v_max_auto = 3.5 
         else:
             v_min_auto, v_max_auto = self.obtener_limites_raw(data_plot)
+            v_max_auto=100
             unidad = "dB"
 
         if factor_t > 1:

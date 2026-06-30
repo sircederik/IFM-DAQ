@@ -1,2 +1,10 @@
-2026-05-19 13:00 h - Conexión de antena
-2026-05-18 15:00 h - Desconexión de antena
+2026-06-30 08:07 h - LNA ON
+2026-06-25 12:46 h - LNA OFF
+2026-06-25 08:50 h - LNA OFF
+2026-06-09 14:23 h - LNA ON
+2026-06-09 14:23 h - Se integró Filtro de FM 88-111 MHz
+2026-06-08 10:00 h - LNA OFF
+2026-05-21 10:00 h - LNA ONN
+2026-05-21 10:00 h - LNA Integrado
+2026-05-19 13:00 h - Antena adoptada
+2026-05-18 15:00 h - Antena desconectada 
