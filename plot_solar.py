@@ -580,7 +580,19 @@ class SolarAnalyzer:
             #plt.tight_layout() #s lo que hace que la imagen se vea "hermosa" y ordenada
             #self.fig.tight_layout(rect=[0, 0.03, 1, 0.95]) # Deja un pequeño espacio arriba/abajo
 
-            plt.savefig(output_name, dpi=300, bbox_inches='tight')
+
+
+            if self.args.dir:
+                output_dir = self.args.dir
+                
+                if not os.path.exists(output_dir):
+                    os.makedirs(output_dir, exist_ok=True)
+                    print(f"📁 Directorio creado automáticamente: {output_dir}")
+            else:
+                output_dir="./"
+
+
+            plt.savefig(output_dir+'/'+output_name, dpi=300, bbox_inches='tight')
             print(f"✅ Gráfico guardado como: {output_name}")
             # Solo cerramos si no estamos en una sesión interactiva activa
             if not plt.isinteractive():
@@ -737,6 +749,9 @@ if __name__ == "__main__":
 
     parser.add_argument('--utc', action='store_true', help='Usar tiempo universal UTC)')
     parser.add_argument('--audio', type=int,  help='Generar una archivo de audio con duración en segundos.')
+    parser.add_argument('--dir', type=str, default=None, 
+                        help='Directorio de salida donde se guardará la imagen generada')
+
     args = parser.parse_args()
 
     # Flujo de ejecución limpio
