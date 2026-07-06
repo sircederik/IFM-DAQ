@@ -1,3 +1,6 @@
+2026-07-06 13:16 h - sincro_solar.sh ganancia 30dB
+2026-07-02 07:59 h - LNA ON
+2026-07-01 13:29 h - LNA OFF
 2026-06-30 08:07 h - LNA ON
 2026-06-25 12:46 h - LNA OFF
 2026-06-25 08:50 h - LNA OFF

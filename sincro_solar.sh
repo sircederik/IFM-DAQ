@@ -2,7 +2,7 @@
 
 # --- CONFIGURACIÓN ---
 FREQ_RANGE="16M:24M:10k"
-GAIN="0"
+GAIN="30"
 INTEGRATION="1s"
 DURATION="2h"
 LOCAL_DIR="$HOME/capturas_solar"
