@@ -1,3 +1,9 @@
+2026-07-14 14:04 h - Antena conectada
+2026-07-14 07:44 h - Antena desconectada
+2026-07-09 12:05 h - Reinicio
+2026-07-09 12:05 h - sincro_solar.sh ganancia 10dB
+2026-07-09 12:04 h - LNA ON
+2026-07-08 10:41 h - LNA OFF
 2026-07-06 13:16 h - sincro_solar.sh ganancia 30dB
 2026-07-02 07:59 h - LNA ON
 2026-07-01 13:29 h - LNA OFF
