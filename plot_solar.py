@@ -531,13 +531,6 @@ class SolarAnalyzer:
         self.ax1.set_title(f"Análisis Radioastronómico Solar: {fmin}-{np.round(fmax)} MHz")
         self.ax1.set_ylabel(f"Frecuencia [MHz]")
         self.ax1.tick_params(labelbottom=False) # Quitar etiquetas de self.ax1 para que no se encimen
-        # Dibujar las bandas de confianza
-        #self.ax2.axhspan(-s1, s1, color='gray', alpha=0.15, label=f'1{unidad_txt} (Ruido)')
-        #self.ax2.axhspan(s1, s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
-        #self.ax2.axhspan(-s1, -s2, color='green', alpha=0.15, label=f'2{unidad_txt} (Cuidado)')
-        #self.ax2.axhspan(s2, s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
-        #self.ax2.axhspan(-s2, -s3, color='blue', alpha=0.15, label=f'3{unidad_txt} (Ráfaga!)')
-
         # Ajustar límites del eje Y dinámicamente
         self.ax2.margins(x=0)
         self.ax2.xaxis_date()
@@ -547,20 +540,52 @@ class SolarAnalyzer:
         pos2 = self.ax2.get_position()
         self.ax2.set_position([pos1.x0, pos2.y0, pos1.width, pos2.height])
 
-        locator = mdates.AutoDateLocator()
-        self.ax2.xaxis.set_major_locator(locator)
+        #locator = mdates.AutoDateLocator()
+        #self.ax2.xaxis.set_major_locator(locator)
+        #self.ax2.set_ylabel(f"Flujo Relativo {unidad}")
+
+        #if self.args.utc:
+        #    self.ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d', tz=tz_utc))
+        #    TZ=f'[UTC]'
+        #else:
+        #    self.ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d'))
+        #    TZ=f'[LT]'
+        #self.ax2.set_xlabel(f"Tiempo {TZ}")
+
+        #plt.setp(self.ax2.get_xticklabels(), rotation=45, ha='right')
+        #self.ax2.plot(tiempos_plot, potencia_plot, color='red', linewidth=1.3)
+
+
+        # === CONFIGURACIÓN AVANZADA DE MARCAS TEMPORALES (TICKS) ===
+        # Localizador Principal: Coloca marcas grandes y etiquetas cada 2 horas
+        locador_principal = mdates.HourLocator(interval=2)
+        self.ax2.xaxis.set_major_locator(locador_principal)
+
+        # Localizador Secundario: Coloca marcas pequeñas (sin texto) cada 30 minutos
+        locador_secundario = mdates.HourLocator(interval=1)  # O usa mdates.MinuteLocator(byminute=[0, 30])
+        self.ax2.xaxis.set_minor_locator(locador_secundario)
+
+        # Habilitar rejilla (Grid) fina para mejorar la lectura visual
+        self.ax2.grid(True, which='major', color='gray', linestyle='--', alpha=0.5)
+        self.ax2.grid(True, which='minor', color='gray', linestyle=':', alpha=0.3)
+
+        # Replicar la rejilla en el espectrograma (ax1) para heredar la simetría
+        self.ax1.grid(True, which='major', color='white', linestyle='--', alpha=0.2)
+        # ==========================================================
+
         self.ax2.set_ylabel(f"Flujo Relativo {unidad}")
 
         if self.args.utc:
             self.ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d', tz=tz_utc))
-            TZ=f'[UTC]'
+            TZ = f'[UTC]'
         else:
             self.ax2.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M\n%y/%m/%d'))
-            TZ=f'[LT]'
+            TZ = f'[LT]'
         self.ax2.set_xlabel(f"Tiempo {TZ}")
 
         plt.setp(self.ax2.get_xticklabels(), rotation=45, ha='right')
         self.ax2.plot(tiempos_plot, potencia_plot, color='red', linewidth=1.3)
+
 
     # Lógica de salida ajustada
         if interactivo:
@@ -577,10 +602,6 @@ class SolarAnalyzer:
                     output_name = output_name.replace(".png", f"_S{vmin:.1f}_{vmax:.1f}.png")
 
             self.fig.align_labels() 
-            #plt.tight_layout() #s lo que hace que la imagen se vea "hermosa" y ordenada
-            #self.fig.tight_layout(rect=[0, 0.03, 1, 0.95]) # Deja un pequeño espacio arriba/abajo
-
-
 
             if self.args.dir:
                 output_dir = self.args.dir
@@ -590,7 +611,6 @@ class SolarAnalyzer:
                     print(f"📁 Directorio creado automáticamente: {output_dir}")
             else:
                 output_dir="./"
-
 
             plt.savefig(output_dir+'/'+output_name, dpi=300, bbox_inches='tight')
             print(f"✅ Gráfico guardado como: {output_name}")
