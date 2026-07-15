@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # --- CONFIGURACIÓN ---
-FREQ_RANGE="16M:24M:10k"
-GAIN="10"
-INTEGRATION="1s"
+FREQ_RANGE="16M:24M:1k"
+GAIN="0"
+INTEGRATION="10s"
 DURATION="2h"
 LOCAL_DIR="$HOME/capturas_solar"
 REMOTE_USER="space-weather"

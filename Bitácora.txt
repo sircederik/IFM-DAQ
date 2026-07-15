@@ -1,3 +1,6 @@
+2026-07-15 13:44 h - Activado
+2026-07-15 13:43 h - Cambio de parámetros: 16-24-1k, 10s Int, Gain 0dB
+2026-07-15 13:17 h - Shutdown; se reinició el equipo
 2026-07-14 14:04 h - Antena conectada
 2026-07-14 07:44 h - Antena desconectada
 2026-07-09 12:05 h - Reinicio
