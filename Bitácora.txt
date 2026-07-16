@@ -1,3 +1,5 @@
+2026-07-16 12:38 h - Reinicio, con Gain de 50dB
+2026-07-16 12:34 h - Construccion de archivo sincro_solar.conf
 2026-07-15 13:44 h - Activado
 2026-07-15 13:43 h - Cambio de parámetros: 16-24-1k, 10s Int, Gain 0dB
 2026-07-15 13:17 h - Shutdown; se reinició el equipo
