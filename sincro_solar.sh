@@ -1,20 +1,24 @@
 #!/bin/bash
+while true; do
+
+echo "Loading configuration and settings..."
+	source /home/moun/IFM-DAQ/sincro_solar.conf
 
 # --- CONFIGURACIÓN ---
-FREQ_RANGE="16M:24M:1k"
-GAIN="0"
-INTEGRATION="10s"
-DURATION="2h"
-LOCAL_DIR="$HOME/capturas_solar"
-REMOTE_USER="space-weather"
-REMOTE_IP="148.216.53.34"
-REMOTE_DIR="/home/space-weather/capturas/"
+#FREQ_RANGE="16M:24M:1k"
+#GAIN="0"
+#INTEGRATION="10s"
+#DURATION="2h"
+#LOCAL_DIR="$HOME/capturas_solar"
+#REMOTE_USER="space-weather"
+#REMOTE_IP="148.216.53.34"
+#REMOTE_DIR="/home/space-weather/capturas/"
 
 mkdir -p "$LOCAL_DIR"
 
 echo "=== Estación Solar Morelia: Modo Captura Continua ==="
 
-while true; do
+
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
     FILE_NAME="solar_data_$TIMESTAMP.csv"
     FILE_PATH="$LOCAL_DIR/$FILE_NAME"
